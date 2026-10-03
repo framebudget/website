@@ -1,10 +1,16 @@
 import calibration from "../calibration.json";
 import { deriveClient } from "./client";
+import { readJson, sameOrigin, status, utcDay } from "./http";
+import { CLOSE_EXPIRED_RUNS_SQL, handleLabRuns, handleLabSteps, LAB_RETENTION_SQL, STEPS_PATH } from "./lab";
 import { KERNELS, validateReport, type Report } from "./validate";
 
 export interface Env {
   DB: D1Database;
   ASSETS: Fetcher;
+  /** Turnstile secret for the lab (a secret on the deployed Worker, .dev.vars locally). */
+  TURNSTILE_SECRET_KEY: string;
+  /** Most lab runs created per UTC day (a var in wrangler.jsonc). */
+  LAB_DAILY_CAP: string;
 }
 
 export const MAX_BODY_BYTES = 4096;
@@ -22,48 +28,6 @@ const INSERT_SQL = `INSERT INTO reports (
 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
 
 export const RETENTION_SQL = "DELETE FROM reports WHERE created_day < ?";
-
-/** UTC `YYYY-MM-DD` of a timestamp. */
-export function utcDay(ms: number): string {
-  return new Date(ms).toISOString().slice(0, 10);
-}
-
-/** Bare status, no body, no details. */
-const status = (code: number) => new Response(null, { status: code });
-
-/**
- * Same-origin check: the Origin header must equal the request origin. Some
- * browsers omit Origin on same-origin beacons; Sec-Fetch-Site then vouches.
- */
-function sameOrigin(request: Request, url: URL): boolean {
-  const origin = request.headers.get("origin");
-  if (origin !== null) return origin === url.origin;
-  return request.headers.get("sec-fetch-site") === "same-origin";
-}
-
-/** Reads at most `limit` bytes; returns null (and stops reading) past it. */
-async function readLimited(body: ReadableStream<Uint8Array>, limit: number): Promise<Uint8Array | null> {
-  const reader = body.getReader();
-  const chunks: Uint8Array[] = [];
-  let total = 0;
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    total += value.byteLength;
-    if (total > limit) {
-      await reader.cancel();
-      return null;
-    }
-    chunks.push(value);
-  }
-  const out = new Uint8Array(total);
-  let at = 0;
-  for (const chunk of chunks) {
-    out.set(chunk, at);
-    at += chunk.byteLength;
-  }
-  return out;
-}
 
 /** Column values in INSERT_SQL order. */
 export function reportRow(report: Report, request: Request, nowMs: number): (string | number | null)[] {
@@ -98,19 +62,9 @@ export function reportRow(report: Report, request: Request, nowMs: number): (str
 async function handleReport(request: Request, env: Env, url: URL, nowMs: number): Promise<Response> {
   if (request.method !== "POST") return status(405);
   if (!sameOrigin(request, url)) return status(403);
-  const type = (request.headers.get("content-type") ?? "").split(";")[0]!.trim().toLowerCase();
-  if (type !== "text/plain" && type !== "application/json") return status(415);
-  const length = request.headers.get("content-length");
-  if (length !== null && !(Number(length) <= MAX_BODY_BYTES)) return status(413);
-  if (!request.body) return status(400);
-  const bytes = await readLimited(request.body, MAX_BODY_BYTES);
-  if (!bytes) return status(413);
-  let report: Report | null;
-  try {
-    report = validateReport(JSON.parse(new TextDecoder("utf-8", { fatal: true, ignoreBOM: false }).decode(bytes)));
-  } catch {
-    return status(400);
-  }
+  const body = await readJson(request, MAX_BODY_BYTES, ["text/plain", "application/json"]);
+  if (body instanceof Response) return body;
+  const report = validateReport(body.json);
   if (!report) return status(400);
   try {
     await env.DB.prepare(INSERT_SQL).bind(...reportRow(report, request, nowMs)).run();
@@ -142,6 +96,9 @@ export async function handleFetch(request: Request, env: Env, ctx: ExecutionCont
   const url = new URL(request.url);
   if (url.pathname === "/api/report") return handleReport(request, env, url, nowMs);
   if (url.pathname === "/api/calibration") return handleCalibration(request, url, ctx);
+  if (url.pathname === "/api/lab/runs") return handleLabRuns(request, env, url, nowMs);
+  const steps = STEPS_PATH.exec(url.pathname);
+  if (steps) return handleLabSteps(request, env, url, steps[1]!, nowMs);
   if (url.pathname.startsWith("/api/")) return status(404);
   // Only reachable when the Worker is called directly: run_worker_first sends it /api/* alone, and the
   // asset layer answers every other unmatched path with 404.html (not_found_handling: "404-page").
@@ -179,6 +136,10 @@ export function retentionCutoff(nowMs: number): string {
   return utcDay(nowMs - RETENTION_DAYS * DAY_MS);
 }
 
+/** Deletes reports and lab runs past retention, and closes lab runs whose window expired. */
 export async function runRetention(env: Env, nowMs: number): Promise<void> {
-  await env.DB.prepare(RETENTION_SQL).bind(retentionCutoff(nowMs)).run();
+  const cutoff = retentionCutoff(nowMs);
+  await env.DB.prepare(RETENTION_SQL).bind(cutoff).run();
+  await env.DB.prepare(LAB_RETENTION_SQL).bind(cutoff).run();
+  await env.DB.prepare(CLOSE_EXPIRED_RUNS_SQL).bind(Math.floor(nowMs / 1000)).run();
 }

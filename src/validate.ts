@@ -39,33 +39,33 @@ const TIERS: readonly string[] = ["Full", "High", "Medium", "Lite"];
 const PRESSURES: readonly string[] = ["nominal", "fair", "serious", "critical"];
 const NAME = /^[A-Za-z][A-Za-z0-9_-]{0,31}$/;
 /** Printable ASCII, 1 to 64 characters. */
-const CAL = /^[\x20-\x7e]{1,64}$/;
+export const CAL = /^[\x20-\x7e]{1,64}$/;
 
 const REPORT_REQUIRED = ["v", "cal", "score", "cold", "warm", "kernels", "tickMs", "hints", "tier", "effects", "stepped", "fps"];
 const HINTS_KEYS = ["cores", "memoryGb", "pressure", "reducedMotion"];
 
 type Obj = Record<string, unknown>;
 
-function isObject(v: unknown): v is Obj {
+export function isObject(v: unknown): v is Obj {
   return typeof v === "object" && v !== null && !Array.isArray(v);
 }
 
 /** Every key is allowed and every required key is present. */
-function hasKeys(o: Obj, allowed: readonly string[], required: readonly string[]): boolean {
+export function hasKeys(o: Obj, allowed: readonly string[], required: readonly string[]): boolean {
   for (const k of Object.keys(o)) if (!allowed.includes(k)) return false;
   for (const k of required) if (!Object.prototype.hasOwnProperty.call(o, k)) return false;
   return true;
 }
 
-function isInt(v: unknown, min: number, max: number): v is number {
+export function isInt(v: unknown, min: number, max: number): v is number {
   return typeof v === "number" && Number.isInteger(v) && v >= min && v <= max;
 }
 
-function isNum(v: unknown, min: number, max: number): v is number {
+export function isNum(v: unknown, min: number, max: number): v is number {
   return typeof v === "number" && Number.isFinite(v) && v >= min && v <= max;
 }
 
-function isPositive(v: unknown, max: number): v is number {
+export function isPositive(v: unknown, max: number): v is number {
   return isNum(v, 0, max) && v > 0;
 }
 

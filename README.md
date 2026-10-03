@@ -4,8 +4,8 @@ The website of [framebudget](https://github.com/framebudget/core), the browser l
 
 | Path | What it is |
 | --- | --- |
-| repository root | The Cloudflare Worker (see [The Worker](#the-worker)): `src/`, `test/`, `migrations/`, `scripts/calibrate.mjs`, `wrangler.jsonc`, `calibration.json`. It serves `docs/dist` through its static assets layer, receives the library's anonymous reports (`POST /api/report`, stored in D1) and serves the calibration patch (`GET /api/calibration`). |
-| [`docs/`](docs/README.md) | The site: landing page, API reference, privacy page, error pages and the files for AI agents (`llms.txt`, `llm.txt`, `llms-full.txt`). A static Vite build with its own `package.json`, and a live demo of the library. |
+| repository root | The Cloudflare Worker (see [The Worker](#the-worker)): `src/`, `test/`, `migrations/`, `scripts/calibrate.mjs`, `wrangler.jsonc`, `calibration.json`. It serves `docs/dist` through its static assets layer, receives the library's anonymous reports (`POST /api/report`, stored in D1), serves the calibration patch (`GET /api/calibration`) and stores the opt-in lab runs (`POST /api/lab/runs`, `POST /api/lab/runs/<run>/steps`, stored in D1). |
+| [`docs/`](docs/README.md) | The site: landing page, API reference, privacy page, the opt-in lab (`/lab`), error pages and the files for AI agents (`llms.txt`, `llm.txt`, `llms-full.txt`). A static Vite build with its own `package.json`, and a live demo of the library. |
 
 Related repositories: the library is [github.com/framebudget/core](https://github.com/framebudget/core) (the npm packages `framebudget`, `@framebudget/core` and `@framebudget/react`), and the brand (fonts, logos, tokens, the release card template) is [github.com/framebudget/assets](https://github.com/framebudget/assets).
 
@@ -38,9 +38,12 @@ Worker (the repository root), serving the built `docs/dist`:
 ```sh
 npm ci
 npm run site:build                                      # docs/dist, served by the assets binding
+cp .dev.vars.example .dev.vars                         # Turnstile test secret for the lab endpoints
 npx wrangler d1 migrations apply framebudget --local   # or: npm run migrate:local
 npx wrangler dev --local                               # or: npm run dev
 ```
+
+`.dev.vars` (ignored by git) holds `TURNSTILE_SECRET_KEY` for `wrangler dev`. The example file has Cloudflare's always-passing test secret `1x0000000000000000000000000000000AA`; the `/lab` page uses the matching always-passing test sitekey `1x00000000000000000000AA` when served from `localhost` or `127.0.0.1`, so the whole lab flow runs locally without a real challenge. The Worker calls the real siteverify with the test secret, so local runs need network access; if `wrangler dev` logs `TLS peer's certificate is not trusted` for that call, start it with `NODE_EXTRA_CA_CERTS=/etc/ssl/certs/ca-certificates.crt` (the system CA bundle). Production uses the sitekey `0x4AAAAAAFNAudgNvxLdXbLQ` (domains `framebudget.dev` and `www.framebudget.dev`) and the secret set on the deployed Worker.
 
 Then, with the port wrangler prints (8787 by default):
 
@@ -50,6 +53,14 @@ curl -i -X POST http://localhost:8787/api/report \
   --data-binary '{"v":1,"cal":"provisional-1","score":62,"cold":48,"warm":66,"kernels":{"float":7130,"typed":151000,"alloc":18200,"path":3010},"tickMs":0.1,"hints":{"cores":8,"memoryGb":4,"reducedMotion":false},"tier":"Medium","effects":["canvasLowRes","entrances","hover"],"stepped":[],"fps":{"main":58,"canvasLowRes":55}}'
 npx wrangler d1 execute framebudget --local --command "SELECT * FROM reports"
 curl -i http://localhost:8787/api/calibration
+curl -i -X POST http://localhost:8787/api/lab/runs \
+  -H 'Origin: http://localhost:8787' -H 'Content-Type: application/json' \
+  --data-binary '{"turnstile":"XXXX.DUMMY.TOKEN.XXXX","lib":"0.2.1","cal":"provisional-1","device":{"score":61.2,"cold":48,"warm":66.4,"kernels":{"float":7130,"typed":151000,"alloc":18200,"path":3010},"tickMs":0.1,"cores":8,"memoryGb":4,"refreshHz":60,"dpr":2.6,"viewportWidth":400,"reducedMotion":false,"saveData":false}}'
+# then, with the run and key from the 201 answer:
+curl -i -X POST http://localhost:8787/api/lab/runs/<run>/steps \
+  -H 'Origin: http://localhost:8787' -H 'Content-Type: application/json' \
+  --data-binary '{"key":"<key>","step":{"name":"baseline","effects":[],"frames":300,"durationMs":5004,"medianMs":16.7,"p95Ms":18.1,"maxMs":33.4,"over":2},"done":true}'
+npx wrangler d1 execute framebudget --local --command "SELECT * FROM lab_runs"
 ```
 
 Run the retention job locally with `npx wrangler dev --local --test-scheduled` and `curl "http://localhost:8787/__scheduled?cron=17+3+*+*+*"`. Local D1 state lives in `.wrangler/` (ignored by git).
@@ -57,9 +68,9 @@ Run the retention job locally with `npx wrangler dev --local --test-scheduled` a
 Tests and types:
 
 ```sh
-npm test               # Vitest, test/ only; handler tests run against in-memory SQLite with the real migration,
-                       # assets.test.ts runs wrangler.jsonc's routing in wrangler's local runtime,
-                       # validate.test.ts checks the report the installed framebudget package sends
+npm test               # Vitest, test/ only; handler and lab tests run against in-memory SQLite with the real migrations
+                       # (Turnstile's siteverify stubbed), assets.test.ts runs wrangler.jsonc's routing in wrangler's
+                       # local runtime, validate.test.ts checks the report the installed framebudget package sends
 npm run typecheck      # src/ with the Workers types, then test/
 ```
 
@@ -70,7 +81,8 @@ One Cloudflare Worker (free plan) for framebudget.dev:
 - Serves the landing site (`docs/dist`, the Vite build) through the static assets layer. Static files are served without running the Worker, so they cost nothing and do not count against Worker requests. `html_handling` is `auto-trailing-slash`: `/` serves `index.html`, `/api` and `/privacy` serve `api.html` and `privacy.html`, which is how the site links them. `/privacy.html` redirects to `/privacy`. `not_found_handling` is `404-page`: a path with no matching file gets `404.html` (`docs/404.html`) with status 404, from the asset layer.
 - `POST /api/report`: receives the anonymous report the library sends with `navigator.sendBeacon` and stores one row in D1.
 - `GET /api/calibration`: returns the calibration patch the library fetches at most once a day.
-- A daily cron deletes reports older than 400 days.
+- `POST /api/lab/runs` and `POST /api/lab/runs/<run>/steps`: the opt-in lab (`/lab`). A visitor who consents and passes Turnstile gets one row; each measured step updates that row.
+- A daily cron deletes reports and lab runs older than 400 days and closes expired lab runs.
 
 The data exists to calibrate the score scale (reference rates) and the effect thresholds on real devices.
 
@@ -104,6 +116,66 @@ Returns `calibration.json` with `Cache-Control: public, max-age=3600`, and store
 
 The patch is a JSON file in the repository, bundled into the Worker at build time, instead of a row in D1 or a KV value. Calibration changes then go through pull request review, ship with a deploy, and need no extra storage, admin endpoint or secret. It starts as `{}`: the library defaults stay in force. Note that `mergeCalibration(defaultCalibration, remote, ...sitePatches)` lets the site's own patch (effect thresholds in `docs/src/effects.ts`) win over this one, so this file mainly matters for other sites using the library and for reference rates, cold reference rates, tier floors, caps and pressure multipliers. Changing `reference` changes `calibrationKey`, which invalidates cached scores on every device; only change it with a calibration run, not as a no-op edit.
 
+#### `POST /api/lab/runs`
+
+Creates one lab run (one row in `lab_runs`). The `/lab` page calls it once, after the visitor passed Turnstile and pressed the button.
+
+```json
+{
+  "turnstile": "<Turnstile token>",
+  "lib": "0.2.1",
+  "cal": "<budget.snapshot().calibration.version>",
+  "device": {
+    "score": 61.2, "cold": 48.0, "warm": 66.4,
+    "kernels": { "float": 7130, "typed": 151000, "alloc": 18200, "path": 3010 },
+    "tickMs": 0.1, "cores": 8, "memoryGb": 4,
+    "refreshHz": 60, "dpr": 2.6, "viewportWidth": 400,
+    "reducedMotion": false, "saveData": false
+  }
+}
+```
+
+Checks in order, each failure a bare status with no body:
+
+| Check | Failure |
+| --- | --- |
+| Method is `POST` | 405 |
+| Same origin, as for `/api/report` | 403 |
+| `Content-Type` is `application/json` | 415 |
+| Body at most 4096 bytes | 413 |
+| Body is a valid run (`src/lab-validate.ts`): exact keys at every level, every device key present (`cold`, `warm`, `tickMs`, `cores`, `memoryGb` and each kernel may be `null`), scores 0..10000, kernel rates positive, whole `cores` 1..1024, whole `refreshHz` 1..1000, `dpr` above 0 up to 16, booleans for the flags, `lib` `^[0-9A-Za-z.+-]{1,32}$`, a Turnstile token of 1..2048 characters | 400 |
+| Turnstile: `POST https://challenges.cloudflare.com/turnstile/v0/siteverify` with the form fields `secret` and `response` only (never the IP) answers `success: true`; an unreachable siteverify also fails | 403 |
+| Fewer than `LAB_DAILY_CAP` runs created today (UTC) | 429 |
+| Insert succeeds | 503 |
+
+Success is `201` with `{"run": "<uuid>", "key": "<64 hex characters>", "maxSteps": 20, "expiresIn": 900}` and `Cache-Control: no-store`. The run id is `crypto.randomUUID()`; the key is 32 random bytes in hex, and only its SHA-256 is stored. The page keeps both in memory only. Device numbers are stored at the precision the page promises, whatever it sent: scores and `dpr` to 1 decimal, kernel rates to 3 significant digits, `tickMs` to 2, `viewportWidth` to the nearest 100. The daily cap and the insert are one statement (`INSERT ... SELECT ... WHERE (SELECT COUNT(*) FROM lab_runs WHERE created_day = ?) < ?`), so concurrent requests cannot pass the cap.
+
+#### `POST /api/lab/runs/<run>/steps`
+
+Appends one measured step to the run's row. The page sends each step between measurements, never during one.
+
+```json
+{
+  "key": "<key from the create response>",
+  "step": { "name": "baseline", "effects": [], "frames": 300, "durationMs": 5004, "medianMs": 16.7, "p95Ms": 18.1, "maxMs": 33.4, "over": 2 },
+  "done": false
+}
+```
+
+| Check | Failure |
+| --- | --- |
+| `<run>` is a UUID | 404 |
+| Method is `POST` | 405 |
+| Same origin | 403 |
+| `Content-Type` is `application/json` | 415 |
+| Body at most 2048 bytes | 413 |
+| Body is valid: `key` 64 lowercase hex characters, `done` boolean, `name` `baseline`, `baseline-end`, `all` or an effect name (`^[A-Za-z][A-Za-z0-9]{0,31}$`), at most 32 distinct effect names, whole `frames` 0..10000, whole `over` 0..`frames`, ms values 0..10000 | 400 |
+| The run exists | 404 |
+| The run is open: not completed, `open_until` not passed, fewer than 20 steps | 409 |
+| `sha256(key)` matches the stored hash | 403 |
+
+Success is `204`. The write is a single `UPDATE lab_runs SET steps = json_insert(steps, '$[#]', json(?)), step_count = step_count + 1 WHERE id = ? AND write_key_hash = ? AND completed = 0 AND step_count < 20 AND open_until >= ?`, so concurrent steps can never exceed 20 or write to a closed run; only when it changes no row does the Worker read the row to choose between 404, 409 and 403. The stored step is rebuilt from the validated fields in a fixed key order. `done: true` also sets `completed = 1`, `write_key_hash = NULL` and `open_until = NULL`: the run is closed and nothing on the row tells the time of day.
+
 ### Data collected
 
 Each row holds exactly what the library's `TelemetryReport` contains, plus coarse facts derived from request headers:
@@ -111,7 +183,9 @@ Each row holds exactly what the library's `TelemetryReport` contains, plus coars
 - From the report: calibration version, final score, cold and warm benchmark scores, per-kernel rates, clock resolution, core count, device memory, Compute Pressure state, reduced-motion preference, tier, effects that ran, effects the governor stepped down, median fps per source.
 - Derived server-side: UTC day (no time of day), engine family and major version, OS family, phone-class flag, two-letter country from `request.cf.country`.
 
-Not collected, not stored, not logged: IP address, User-Agent string, client hint values, cookies, any identifier, the page URL, referrer, time of day, city or region. The raw headers are read once to derive the coarse fields (`src/client.ts`) and then discarded. Nothing is logged by the Worker.
+A lab run (`lab_runs`) holds the library version, the calibration version, the device numbers listed under [`POST /api/lab/runs`](#post-apilabruns) (scores, kernel rates, clock resolution, cores, memory, refresh rate, device pixel ratio, viewport width rounded to 100 px, reduced-motion and save-data flags), the same derived fields as a report, and the measured steps (per step: name, effects, frame count, duration, median, p95 and max frame time, frames over 1.5 refresh intervals). Until the run closes it also holds the SHA-256 of the write key and the epoch second the run stops accepting steps; both are cleared when the last step arrives or, for abandoned runs, by the daily cron.
+
+Not collected, not stored, not logged, for reports and lab runs alike: IP address, User-Agent string, client hint values, cookies, any identifier, the page URL, referrer, time of day, city or region. The raw headers are read once to derive the coarse fields (`src/client.ts`) and then discarded. Turnstile's siteverify gets the token and the secret, not the IP. Nothing is logged by the Worker.
 
 ### Schema
 
@@ -143,14 +217,48 @@ Not collected, not stored, not logged: IP address, User-Agent string, client hin
 
 Indexes: `score`, `(engine, engine_version)`, `(os, mobile)`, `created_day`. `mobile` alone has two values and gets no index of its own; it is the second column of the `os` index. iPadOS Safari reports itself as macOS, so iPads usually land in `macos`.
 
+`migrations/0002_lab.sql`, table `lab_runs` (one row per lab run; steps update it, never add rows):
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `id` | TEXT PK | Random UUID, no meaning outside the table |
+| `created_day` | TEXT | UTC `YYYY-MM-DD` |
+| `lib` | TEXT | framebudget version the page ran |
+| `cal` | TEXT | Calibration version the scores used |
+| `score` | REAL | framebudget score, 1 decimal |
+| `cold`, `warm` | REAL NULL | Benchmark scores, 1 decimal |
+| `tick_ms` | REAL NULL | Clock resolution, 2 significant digits |
+| `kernel_float`, `kernel_typed`, `kernel_alloc`, `kernel_path` | REAL NULL | Work units per ms, 3 significant digits |
+| `cores` | INTEGER NULL | `hardwareConcurrency` |
+| `memory_gb` | REAL NULL | `deviceMemory` |
+| `refresh_hz` | INTEGER | Refresh rate measured by the page |
+| `dpr` | REAL | `devicePixelRatio`, 1 decimal |
+| `viewport_width` | INTEGER | CSS pixels, nearest 100 |
+| `reduced_motion`, `save_data` | INTEGER | 0 or 1 |
+| `engine`, `engine_version`, `os`, `mobile`, `country` | | As in `reports` |
+| `steps` | TEXT | JSON array of steps, at most 20 |
+| `step_count` | INTEGER | Entries in `steps` |
+| `completed` | INTEGER | 1 once the page sent `done: true`; 0 for abandoned runs |
+| `write_key_hash` | TEXT NULL | SHA-256 hex of the write key, NULL once closed |
+| `open_until` | INTEGER NULL | Epoch seconds, creation + 900, NULL once closed |
+
+Index: `created_day` (the daily cap counts today's rows; retention deletes by day). A row is at most about 25 KB (20 steps of 32 effect names each); a typical run is about 3 KB.
+
 ### Retention
 
-The cron trigger (`17 3 * * *`, daily) runs `DELETE FROM reports WHERE created_day < ?` with the UTC day 400 days before the run. A report from exactly 400 days ago is kept; one day older is deleted.
+The cron trigger (`17 3 * * *`, daily) runs, with the UTC day 400 days before the run:
+
+- `DELETE FROM reports WHERE created_day < ?`
+- `DELETE FROM lab_runs WHERE created_day < ?`
+- `UPDATE lab_runs SET write_key_hash = NULL, open_until = NULL WHERE open_until < ?` (the current epoch second): runs the page abandoned are closed, so no time of day survives a run.
+
+A row from exactly 400 days ago is kept; one day older is deleted.
 
 ### Free plan notes
 
 - Workers free plan: 100,000 Worker requests per day. Static asset requests are free and unlimited. The Worker runs only for `/api/*` (missing pages get `404.html` from the asset layer); a browser costs at most one Worker request a week for the report (`minIntervalDays: 7`), plus the calibration fetch at most once a day.
 - D1 free plan: 5 GB storage, 100,000 rows written and 5 million rows read per day. A row is about 400 bytes. Every browser reports (`sampleRate: 1`) but at most once a week (`minIntervalDays: 7`), so rows track weekly unique browsers rather than page views; 400 days of retention fit in 5 GB up to about 30,000 reports a day (12 million rows). Past the daily write limit, inserts fail and the Worker answers 503 until the next day; nothing is billed.
+- Lab: `LAB_DAILY_CAP` (a var in `wrangler.jsonc`, `"1000"`) bounds new runs per UTC day. A run is at most 21 row writes (the insert and 20 steps), so the lab adds at most about 21,000 row writes a day, and the cap's `COUNT(*)` reads at most one index entry per run already created that day (about 500,000 rows read a day at the cap). A run is about 3 KB (25 KB at most), so 400 days at the cap take about 1.2 GB. Change the cap in `wrangler.jsonc` and deploy; `"0"` closes the lab. Turnstile guards run creation, and the write key guards each run's steps.
 - No rate limiting binding is configured. The Workers Rate Limiting API page does not state whether the binding is available on the free plan, so it is left out rather than risk a failed deploy. If added later, key it by a constant or by route, never by IP.
 
 ## Calibration workflow
@@ -180,6 +288,19 @@ The cron trigger (`17 3 * * *`, daily) runs `DELETE FROM reports WHERE created_d
 
    Try it on the sample: `node scripts/calibrate.mjs test/fixtures/export.json`.
 
+   Lab runs measure effect costs directly, on every device, rather than only on devices that already run an effect. Export them and pass `--lab` (alone, or with a reports export):
+
+   ```sh
+   npx wrangler d1 execute framebudget --remote --json --command "SELECT * FROM lab_runs" > lab.json
+   node scripts/calibrate.mjs --lab lab.json --target-fps 55 --max-under 0.05 --min-samples 10
+   ```
+
+   It uses the runs of one calibration version (`--cal`, default the most common) that measured a `baseline` step, and prints per effect (every step except `baseline` and `baseline-end`; `all` is every effect at once):
+   - the frame cost over the baseline, `medianMs - baseline medianMs` of the same run, as the median and p95 across devices in each score bucket (0-25, 25-50, 50-75, 75-100, 100-150, 150-200, 200+);
+   - a proposed threshold: the lowest score at which fewer than `--max-under` of the devices at or above it had a p95 frame time over the target, which is `1000 / --target-fps` ms at 60 Hz scaled by the refresh rate (18.18 ms at 60 Hz, 9.09 ms at 120 Hz by default), with at least `--min-samples` devices at or above it; otherwise `not enough devices`.
+
+   Thresholds are on the lab's score scale (`cal`). Try it on the sample: `node scripts/calibrate.mjs --lab test/fixtures/lab-export.json`.
+
 3. Apply the result: edit the effect thresholds in `docs/src/effects.ts` (and the library defaults, `defaultCalibration` in [github.com/framebudget/core](https://github.com/framebudget/core), when they should change for everyone; the site picks them up with the library release that ships them), and/or set `reference` (and `coldReference`) in `calibration.json`. If the reference rates move, scale every threshold and tier floor by the printed factor in the same change, so effects stay on the same devices.
 
 4. Open a pull request, then release the website (see [Releases and deploys](#releases-and-deploys)): the release deploys the Worker and the site.
@@ -207,6 +328,8 @@ npm run site:build
 npx wrangler d1 migrations apply framebudget --remote   # only when migrations/ changed
 npm run deploy                                          # wrangler deploy: the Worker plus docs/dist
 ```
+
+The lab's Turnstile secret is a Worker secret, already set on the deployed Worker; to rotate it, run `npx wrangler secret put TURNSTILE_SECRET_KEY` (never commit it). `LAB_DAILY_CAP` ships with `wrangler.jsonc`.
 
 `framebudget.dev` and `www.framebudget.dev` are custom domains of the Worker, so the zone must be on the same Cloudflare account. Each host is its own origin: a page on `www` reports to `www`. New migrations go in `migrations/` and are applied with `npx wrangler d1 migrations apply framebudget --remote` before the deploy that needs them.
 

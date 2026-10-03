@@ -33,8 +33,14 @@
       "migrations_dir": "migrations"
     }
   ],
+  "vars": {
+    // Most lab runs (POST /api/lab/runs) created per UTC day; past it the API answers 429.
+    "LAB_DAILY_CAP": "1000"
+  },
+  // TURNSTILE_SECRET_KEY is a secret (npx wrangler secret put TURNSTILE_SECRET_KEY), never in this file;
+  // local dev reads it from .dev.vars (see .dev.vars.example).
   "triggers": {
-    // Daily retention job: deletes reports older than 400 days.
+    // Daily retention job: deletes reports and lab runs older than 400 days and closes expired lab runs.
     "crons": ["17 3 * * *"]
   }
 }
