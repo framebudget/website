@@ -4,6 +4,20 @@ Every release of the framebudget website (framebudget.dev), newest first, split 
 
 Website versions are independent of the library's. Until 2026-10-03 the website shipped with the library, from one repository; that history is in the [framebudget CHANGELOG](https://github.com/framebudget/core/blob/main/CHANGELOG.md), up to and including 0.2.1.
 
+## [1.1.0] - 2026-10-03
+
+### Site
+
+#### Features
+
+- **lab:** add an opt-in calibration lab ([762e6cb](https://github.com/framebudget/website/commit/762e6cb782b88abff8b8cbe73e22e134d58309eb)) ([#3](https://github.com/framebudget/website/pull/3))
+
+### Worker
+
+#### Features
+
+- **lab:** add an opt-in calibration lab ([762e6cb](https://github.com/framebudget/website/commit/762e6cb782b88abff8b8cbe73e22e134d58309eb)) ([#3](https://github.com/framebudget/website/pull/3))
+
 ## [1.0.0] - 2026-10-03
 
 ### Site
