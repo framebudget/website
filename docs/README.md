@@ -4,11 +4,11 @@ The landing page and API reference for framebudget. The page is also a demo of t
 
 ## Commands
 
-Run these in `site/`. The site uses the library from `../packages/framebudget` through the npm workspace, so build the library first (`npm run build` at the repository root).
+Run these in `docs/`. The site uses the library from the repository root through a `file:..` dependency, so build the library first (`npm run build` at the repository root).
 
 | Command | What it does |
 | --- | --- |
-| `npm install` | Installs Vite, TypeScript, `motion` and `cuelume`, and links `framebudget` from `../packages/framebudget`. |
+| `npm install` | Installs Vite, TypeScript, `motion` and `cuelume`, and links `framebudget` from the repository root. |
 | `npm run dev` | Starts the Vite dev server with hot reload. |
 | `npm run build` | Type-checks, then writes the static site to `dist/`. |
 | `npm run serve` | Serves `dist/` with gzip and long-lived caching for hashed assets, like a production host. Optional port: `npm run serve -- 8080`. |
@@ -55,4 +55,4 @@ The site enables framebudget's telemetry for its own visitors (`src/share.ts`, `
 
 ## Assets
 
-The fonts (Archivo and Martian Mono, SIL Open Font License 1.1), logos, favicon and `og.png` are copied from `../brand/` into `public/`. `src/tokens.css` is a copy of `../brand/tokens.css` with root-relative font paths. Nothing is loaded from a CDN.
+The fonts (Archivo and Martian Mono, SIL Open Font License 1.1), logos, favicon and `og.png` are copied from `../assets/brand/` into `public/`. `src/tokens.css` is a copy of `../assets/brand/tokens.css` with root-relative font paths. Nothing is loaded from a CDN.

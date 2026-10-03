@@ -2,7 +2,7 @@
 
 One Cloudflare Worker (free plan) for framebudget.dev:
 
-- Serves the landing site (`site/dist`, the Vite build) through the static assets layer. Static files are served without running the Worker, so they cost nothing and do not count against Worker requests. `html_handling` is `auto-trailing-slash`: `/` serves `index.html`, `/api` and `/privacy` serve `api.html` and `privacy.html`, which is how the site links them. `/privacy.html` redirects to `/privacy`.
+- Serves the landing site (`docs/dist`, the Vite build) through the static assets layer. Static files are served without running the Worker, so they cost nothing and do not count against Worker requests. `html_handling` is `auto-trailing-slash`: `/` serves `index.html`, `/api` and `/privacy` serve `api.html` and `privacy.html`, which is how the site links them. `/privacy.html` redirects to `/privacy`.
 - `POST /api/report`: receives the anonymous report the library sends with `navigator.sendBeacon` and stores one row in D1.
 - `GET /api/calibration`: returns the calibration patch the library fetches at most once a day.
 - A daily cron deletes reports older than 400 days.
@@ -31,7 +31,7 @@ Success is `204 No Content`. Validation is strict: exact keys at every level, `v
 
 Returns `worker/calibration.json` with `Cache-Control: public, max-age=3600`, and stores it in the edge cache (`caches.default`) for an hour. Other methods get 405.
 
-The patch is a JSON file in the repository, bundled into the Worker at build time, instead of a row in D1 or a KV value. Calibration changes then go through pull request review, ship with a deploy, and need no extra storage, admin endpoint or secret. It starts as `{}`: the library defaults stay in force. Note that `mergeCalibration(defaultCalibration, remote, ...sitePatches)` lets the site's own patch (effect thresholds in `site/src/effects.ts`) win over this one, so this file mainly matters for other sites using the library and for reference rates, cold reference rates, tier floors, caps and pressure multipliers. Changing `reference` changes `calibrationKey`, which invalidates cached scores on every device; only change it with a calibration run, not as a no-op edit.
+The patch is a JSON file in the repository, bundled into the Worker at build time, instead of a row in D1 or a KV value. Calibration changes then go through pull request review, ship with a deploy, and need no extra storage, admin endpoint or secret. It starts as `{}`: the library defaults stay in force. Note that `mergeCalibration(defaultCalibration, remote, ...sitePatches)` lets the site's own patch (effect thresholds in `docs/src/effects.ts`) win over this one, so this file mainly matters for other sites using the library and for reference rates, cold reference rates, tier floors, caps and pressure multipliers. Changing `reference` changes `calibrationKey`, which invalidates cached scores on every device; only change it with a calibration run, not as a no-op edit.
 
 ## Data collected
 
@@ -78,9 +78,10 @@ From the repository root:
 
 ```sh
 npm install
-npm run build -w framebudget          # library
-npm run build -w framebudget-site     # site/dist, served by the assets binding
+npm run build                         # library
+npm install --prefix docs && npm run build --prefix docs   # docs/dist, served by the assets binding
 cd worker
+npm install
 npx wrangler d1 migrations apply framebudget --local   # or: npm run migrate:local
 npx wrangler dev --local                               # or: npm run dev
 ```
@@ -100,8 +101,8 @@ Run the retention job locally with `npx wrangler dev --local --test-scheduled` a
 Tests and types:
 
 ```sh
-npm test -w framebudget-worker        # Vitest; handler tests run against in-memory SQLite with the real migration
-npm run typecheck -w framebudget-worker
+npm test --prefix worker              # Vitest; handler tests run against in-memory SQLite with the real migration
+npm run typecheck --prefix worker
 ```
 
 ## Calibration workflow
@@ -125,14 +126,14 @@ npm run typecheck -w framebudget-worker
 
    It prints:
    - proposed reference rates: per kernel, the warm rate of the device at the chosen percentile (rows with a warm run only), rounded to 3 significant digits;
-   - the rescale factor for existing scores. A score is `100 * geomean(rate / reference)` over the kernels (`packages/framebudget/src/bench.ts`), so new score = old score x `geomean(current reference / proposed reference)`;
+   - the rescale factor for existing scores. A score is `100 * geomean(rate / reference)` over the kernels (`src/benchmark/finish-benchmark.ts`), so new score = old score x `geomean(current reference / proposed reference)`;
    - per effect, the lowest score threshold such that fewer than `--max-under` of the devices at or above it that ran the effect reported fps under the target (`fps[effect]` when present, else `fps.main`), on the current and on the proposed scale.
 
    Only devices that ran an effect report its fps, so the data cannot justify a threshold below the lowest score that ran it. Proposed thresholds scale the stored final score, which includes hardware caps and pressure multipliers, so they are approximate for capped devices.
 
    Try it on the sample: `node worker/scripts/calibrate.mjs worker/test/fixtures/export.json`.
 
-3. Apply the result: edit the effect thresholds in `site/src/effects.ts` (and the library defaults in `packages/framebudget/src/calibration.ts` when they should change for everyone), and/or set `reference` (and `coldReference`) in `worker/calibration.json`. If the reference rates move, scale every threshold and tier floor by the printed factor in the same change, so effects stay on the same devices.
+3. Apply the result: edit the effect thresholds in `docs/src/effects.ts` (and the library defaults in `src/core/calibration/default-calibration.ts` when they should change for everyone), and/or set `reference` (and `coldReference`) in `worker/calibration.json`. If the reference rates move, scale every threshold and tier floor by the printed factor in the same change, so effects stay on the same devices.
 
 4. Open a pull request, then deploy (`npm run deploy` at the root).
 

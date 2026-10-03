@@ -1,5 +1,5 @@
 {
-  "$schema": "../node_modules/wrangler/config-schema.json",
+  "$schema": "./node_modules/wrangler/config-schema.json",
   "name": "framebudget",
   "main": "src/index.ts",
   // Not newer than the workerd bundled with the installed wrangler (1.20261001.1).
@@ -10,8 +10,8 @@
     { "pattern": "www.framebudget.dev", "custom_domain": true }
   ],
   "assets": {
-    // Vite output of the landing site. Build it first: npm run build (root) then npm run build -w framebudget-site.
-    "directory": "../site/dist",
+    // Vite output of the landing site. Build it first: npm run build at the root, then npm run build in docs/.
+    "directory": "../docs/dist",
     "binding": "ASSETS",
     // Static files are served by the asset layer without invoking the Worker (free, not
     // counted against Worker requests). /api/* runs the Worker first; paths with no matching

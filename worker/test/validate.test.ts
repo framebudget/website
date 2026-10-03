@@ -21,7 +21,7 @@ const variant = (mutate: Mutate) => {
 describe("validateReport", () => {
   it("accepts the report the library's buildReport produces", async () => {
     // Imported through a runtime path so the worker typecheck stays free of DOM types.
-    const lib = new URL("../../packages/framebudget/src/telemetry.ts", import.meta.url).href;
+    const lib = new URL("../../src/core/telemetry/build-report.ts", import.meta.url).href;
     const { buildReport } = (await import(lib)) as { buildReport: (input: unknown) => unknown };
     const bench = (score: number) => ({
       score,
@@ -31,7 +31,7 @@ describe("validateReport", () => {
       sink: 1,
     });
     const report = buildReport({
-      cal: { version: "provisional-1" },
+      calibration: { version: "provisional-1" },
       score: 61.6,
       cold: bench(48.2),
       warm: bench(66.4),

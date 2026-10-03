@@ -23,7 +23,7 @@ Options:
   --cal <version>      Calibration version whose scores are the current scale.
                        Default: the most common version in the export.
   --reference <list>   Current reference rates, e.g. float=10800,typed=219000,alloc=30900,path=4860.
-                       Default: the library defaults in packages/framebudget/src/calibration.ts,
+                       Default: the library defaults in src/core/calibration/default-calibration.ts,
                        overridden by worker/calibration.json.`;
 
 /** Parses RFC 4180 CSV (quoted fields, doubled quotes, newlines inside quotes). */
@@ -191,11 +191,11 @@ export function analyze(rawRows, options) {
 function defaultReference(root) {
   const reference = {};
   try {
-    const source = readFileSync(new URL("packages/framebudget/src/calibration.ts", root), "utf8");
+    const source = readFileSync(new URL("src/core/calibration/default-calibration.ts", root), "utf8");
     const block = /\breference:\s*\{([^}]*)\}/.exec(source)?.[1] ?? "";
     for (const k of KERNELS) {
-      const m = new RegExp(`\\b${k}:\\s*([\\d.e]+)`).exec(block);
-      if (m) reference[k] = Number(m[1]);
+      const m = new RegExp(`\\b${k}:\\s*([\\d._e]+)`).exec(block);
+      if (m) reference[k] = Number(m[1].replaceAll("_", ""));
     }
   } catch {
     // Not in a checkout of the repository; --reference is then required.
