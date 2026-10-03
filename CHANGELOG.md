@@ -4,6 +4,20 @@ Every release of the framebudget website (framebudget.dev), newest first, split 
 
 Website versions are independent of the library's. Until 2026-10-03 the website shipped with the library, from one repository; that history is in the [framebudget CHANGELOG](https://github.com/framebudget/core/blob/main/CHANGELOG.md), up to and including 0.2.1.
 
+## [1.2.0] - 2026-10-03
+
+### Site
+
+#### Features
+
+- **lab:** measure main-thread work per frame ([838152e](https://github.com/framebudget/website/commit/838152eb817c1a752b6fd6ff25be6eba4de5af5c)) ([#7](https://github.com/framebudget/website/pull/7))
+
+### Worker
+
+#### Features
+
+- **lab:** measure main-thread work per frame ([838152e](https://github.com/framebudget/website/commit/838152eb817c1a752b6fd6ff25be6eba4de5af5c)) ([#7](https://github.com/framebudget/website/pull/7))
+
 ## [1.1.1] - 2026-10-03
 
 ### Site
