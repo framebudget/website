@@ -26,7 +26,7 @@ const RUN_COLUMNS = [
   "id", "created_day", "lib", "cal", "score", "cold", "warm", "tick_ms",
   "kernel_float", "kernel_typed", "kernel_alloc", "kernel_path",
   "cores", "memory_gb", "refresh_hz", "dpr", "viewport_width", "reduced_motion", "save_data",
-  "engine", "engine_version", "os", "mobile", "country", "write_key_hash", "open_until",
+  "engine", "engine_version", "os", "mobile", "country", "write_key_hash", "open_until", "protocol",
 ];
 
 /** Inserts only while the day has fewer rows than the cap, in one statement, so concurrent creations cannot pass it. */
@@ -85,6 +85,7 @@ function runRow(run: LabRunRequest, request: Request, id: string, keyHash: strin
     client.country,
     keyHash,
     Math.floor(nowMs / 1000) + RUN_OPEN_SECONDS,
+    run.protocol,
   ];
 }
 

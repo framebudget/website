@@ -33,6 +33,10 @@ function labStep(name = "baseline"): Record<string, unknown> {
   return { name, effects: ["baseline", "baseline-end", "all"].includes(name) ? [] : [name], frames: 300, durationMs: 5004, medianMs: 16.7, p95Ms: 18.1, maxMs: 33.4, over: 2 };
 }
 
+function workStep(name = "baseline"): Record<string, unknown> {
+  return { ...labStep(name), workMeanMs: 2.35, workMedianMs: 2, workP95Ms: 4.1, workFrames: 298 };
+}
+
 const post = (path: string, body: unknown, headers: Record<string, string> = {}) =>
   beacon({ path, body: typeof body === "string" ? body : JSON.stringify(body), headers: { "content-type": "application/json", ...headers } });
 
@@ -110,6 +114,7 @@ describe("POST /api/lab/runs", () => {
         completed: 0,
         write_key_hash: sha256(created.key as string),
         open_until: NOW_S + 900,
+        protocol: 1,
       },
     ]);
     expect(siteverify).toHaveLength(1);
@@ -342,5 +347,89 @@ describe("lab retention", () => {
     expect(byId[finished.run]).toMatchObject({ write_key_hash: null, open_until: null, completed: 1 });
     expect(byId[expired.run]).toMatchObject({ write_key_hash: null, open_until: null, completed: 0 });
     expect(byId[open.run]).toMatchObject({ write_key_hash: sha256(open.key), open_until: NOW_S - 60 + 900 });
+  });
+});
+
+describe("lab protocol 2", () => {
+  it("stores the run's protocol: 1 when the body has none, else the one sent", async () => {
+    const { db, send } = setup();
+    expect((await send(post("/api/lab/runs", labRun()))).status).toBe(201);
+    expect((await send(post("/api/lab/runs", { ...labRun(), protocol: 1 }))).status).toBe(201);
+    expect((await send(post("/api/lab/runs", { ...labRun(), protocol: 2 }))).status).toBe(201);
+    expect(db.labRows().map((r) => r.protocol).sort()).toEqual([1, 1, 2]);
+  });
+
+  it.each<[string, unknown]>([
+    ["protocol 0", 0],
+    ["protocol 3", 3],
+    ["string protocol", "2"],
+    ["null protocol", null],
+    ["fractional protocol", 1.5],
+  ])("rejects %s with 400 and no row", async (_name, protocol) => {
+    const { db, send } = setup();
+    expect((await send(post("/api/lab/runs", { ...labRun(), protocol }))).status).toBe(400);
+    expect(siteverify).toEqual([]);
+    expect(db.labRows()).toEqual([]);
+  });
+
+  it("stores a protocol 1 step byte for byte as before: protocol 1 keys only, in their fixed order", async () => {
+    const { db, create, step } = setup();
+    const { run, key } = await create();
+    const { over, name, ...rest } = labStep("blur");
+    expect((await step(run, { key, step: { over, ...rest, name }, done: false })).status).toBe(204);
+    expect(db.labRows()[0]!.steps).toBe(
+      '[{"name":"blur","effects":["blur"],"frames":300,"durationMs":5004,"medianMs":16.7,"p95Ms":18.1,"maxMs":33.4,"over":2}]',
+    );
+  });
+
+  it("stores the work fields after the protocol 1 keys, in a fixed order, at 2 decimals", async () => {
+    const { db, create, step } = setup();
+    const { run, key } = await create();
+    const { workFrames, workP95Ms, ...rest } = workStep("blur");
+    const sent = { workP95Ms, workFrames, ...rest, workMeanMs: 2.3456, workMedianMs: 1.999 };
+    expect((await step(run, { key, step: sent, done: false })).status).toBe(204);
+    expect(db.labRows()[0]!.steps).toBe(
+      '[{"name":"blur","effects":["blur"],"frames":300,"durationMs":5004,"medianMs":16.7,"p95Ms":18.1,"maxMs":33.4,"over":2,' +
+        '"workMeanMs":2.35,"workMedianMs":2,"workP95Ms":4.1,"workFrames":298}]',
+    );
+  });
+
+  it("accepts null work fields and the bounds: no frames sampled, or every frame at 10000 ms", async () => {
+    const { db, create, step } = setup();
+    const { run, key } = await create();
+    const none = { ...workStep(), workMeanMs: null, workMedianMs: null, workP95Ms: null, workFrames: null };
+    const zero = { ...workStep("canvasLowRes"), workMeanMs: 0, workMedianMs: 0, workP95Ms: 0, workFrames: 0 };
+    const max = { ...workStep("all"), effects: ["blur"], workMeanMs: 10000, workMedianMs: 10000, workP95Ms: 10000, workFrames: 300 };
+    for (const s of [none, zero, max]) expect((await step(run, { key, step: s, done: false })).status).toBe(204);
+    expect(JSON.parse(db.labRows()[0]!.steps as string)).toEqual([none, zero, max]);
+  });
+
+  it("accepts work fields on a protocol 1 run and protocol 1 steps on a protocol 2 run", async () => {
+    const { db, send, step } = setup();
+    const created = async (body: Record<string, unknown>) => (await (await send(post("/api/lab/runs", body))).json()) as { run: string; key: string };
+    const v1 = await created(labRun());
+    const v2 = await created({ ...labRun(), protocol: 2 });
+    expect((await step(v1.run, { key: v1.key, step: workStep(), done: true })).status).toBe(204);
+    expect((await step(v2.run, { key: v2.key, step: labStep(), done: true })).status).toBe(204);
+    expect(db.labRows().every((r) => r.step_count === 1 && r.completed === 1)).toBe(true);
+  });
+
+  const workCases: [string, Record<string, unknown>][] = [
+    ["mean over 10000 ms", { ...workStep(), workMeanMs: 10000.01 }],
+    ["negative median", { ...workStep(), workMedianMs: -0.01 }],
+    ["string p95", { ...workStep(), workP95Ms: "4.1" }],
+    ["workFrames above frames", { ...workStep(), workFrames: 301 }],
+    ["fractional workFrames", { ...workStep(), workFrames: 2.5 }],
+    ["negative workFrames", { ...workStep(), workFrames: -1 }],
+    ["only some work keys", { ...labStep(), workMeanMs: 2, workFrames: 10 }],
+    ["work keys without workMeanMs", { ...labStep(), workMedianMs: 2, workP95Ms: 3, workFrames: 10 }],
+    ["work keys and an extra key", { ...workStep(), workMaxMs: 9 }],
+  ];
+
+  it.each(workCases)("rejects a step with %s with 400", async (_name, s) => {
+    const { db, create, step } = setup();
+    const { run, key } = await create();
+    expect((await step(run, { key, step: s, done: false })).status).toBe(400);
+    expect(db.labRows()[0]!.step_count).toBe(0);
   });
 });

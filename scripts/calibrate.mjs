@@ -25,12 +25,15 @@ const USAGE = `Usage: node calibrate.mjs <export.json|export.csv> [options]
 
 Options:
   --lab <file>         Export of the lab_runs table (JSON or CSV): per effect, frame cost over the
-                       baseline by score bucket and a proposed threshold. Can be combined with a reports export.
+                       baseline by score bucket and a proposed threshold, and, from protocol 2 runs, the
+                       main-thread work per frame on the score 100 device next to the current ms in
+                       docs/src/effects.ts. Can be combined with a reports export.
   --percentile <p>     Device percentile (0-100) that becomes score 100. Default 50.
   --target-fps <fps>   Frame rate a device must reach with an effect on. Default 55. With --lab, the
                        p95 frame time must stay within 1000/fps ms at 60 Hz, scaled by the refresh rate.
   --max-under <f>      Largest tolerated fraction of devices under the target. Default 0.05.
-  --min-samples <n>    Fewest devices at or above a threshold to trust it. Default 10.
+  --min-samples <n>    Fewest devices at or above a threshold to trust it, and fewest devices behind a
+                       proposed effect ms with --lab. Default 10.
   --cal <version>      Calibration version whose scores are the current scale.
                        Default: the most common version in the export.
   --reference <list>   Current reference rates, e.g. float=10800,typed=219000,alloc=30900,path=4860.
@@ -215,16 +218,33 @@ export const LAB_BUCKETS = [25, 50, 75, 100, 150, 200];
 /** Lab steps that measure no effect: the reference for every other step, and its repeat at the end. */
 const LAB_BASELINES = ["baseline", "baseline-end"];
 
-/** Typed view of one lab_runs row. Steps by name; a repeated name keeps the last one. */
+/**
+ * Typed view of one lab_runs row. Steps by name; a repeated name keeps the last one.
+ * `workMeanMs` is null on protocol 1 steps and on steps without a work sample.
+ */
 export function normalizeLab(row) {
   const steps = new Map();
   const list = json(row.steps, []);
   for (const step of Array.isArray(list) ? list : []) {
     const medianMs = num(step?.medianMs);
     const p95Ms = num(step?.p95Ms);
-    if (typeof step?.name === "string" && medianMs !== null && p95Ms !== null) steps.set(step.name, { medianMs, p95Ms });
+    if (typeof step?.name === "string" && medianMs !== null && p95Ms !== null) steps.set(step.name, { medianMs, p95Ms, workMeanMs: num(step.workMeanMs) });
   }
-  return { cal: String(row.cal ?? ""), score: num(row.score), refreshHz: num(row.refresh_hz), completed: num(row.completed) === 1, steps };
+  return {
+    cal: String(row.cal ?? ""),
+    protocol: num(row.protocol) ?? 1,
+    score: num(row.score),
+    refreshHz: num(row.refresh_hz),
+    completed: num(row.completed) === 1,
+    steps,
+  };
+}
+
+/** Rows per calibration version, and the version to analyze: `requested`, else the most common one. */
+function pickCal(rows, requested) {
+  const calCounts = {};
+  for (const r of rows) calCounts[r.cal] = (calCounts[r.cal] ?? 0) + 1;
+  return { calCounts, cal: requested ?? Object.entries(calCounts).sort((a, b) => b[1] - a[1])[0]?.[0] ?? null };
 }
 
 /** p95 frame time a device at `refreshHz` must stay within: 1000 / targetFps ms at 60 Hz, scaled by the refresh rate. */
@@ -247,9 +267,7 @@ export function bucketLabel(i) {
  */
 export function analyzeLab(rawRows, options) {
   const rows = rawRows.map(normalizeLab);
-  const calCounts = {};
-  for (const r of rows) calCounts[r.cal] = (calCounts[r.cal] ?? 0) + 1;
-  const cal = options.cal ?? Object.entries(calCounts).sort((a, b) => b[1] - a[1])[0]?.[0] ?? null;
+  const { calCounts, cal } = pickCal(rows, options.cal);
   const runs = rows.filter((r) => r.cal === cal && r.score !== null && r.refreshHz > 0 && r.steps.has("baseline"));
   const names = [...new Set(runs.flatMap((r) => [...r.steps.keys()]))].filter((n) => !LAB_BASELINES.includes(n)).sort();
   const effects = names.map((name) => {
@@ -270,6 +288,47 @@ export function analyzeLab(rawRows, options) {
   return { rows: rows.length, completed: rows.filter((r) => r.completed).length, calCounts, cal, runs: runs.length, effects };
 }
 
+/** `ms` of every effect in docs/src/effects.ts (its frame time on the score 100 device), by name. */
+export function parseEffectMs(source) {
+  const ms = {};
+  for (const m of source.matchAll(/\{\s*name:\s*"([A-Za-z][A-Za-z0-9]*)"[^\n]*?\bms:\s*([0-9]+(?:\.[0-9]+)?)\b/g)) ms[m[1]] = Number(m[2]);
+  return ms;
+}
+
+/**
+ * The protocol 2 lab analysis, as data. Per effect (every step but the baselines),
+ * over the protocol 2 runs of one calibration version with a baseline work sample:
+ * - cost: the step's mean main-thread work per frame minus the run's baseline mean, floored at 0;
+ * - msAt100: that cost on the score 100 device, cost * score / 100, the inverse of `msAt`
+ *   in docs/src/effects.ts;
+ * - the median and p90 of msAt100 across devices, next to the effect's current `ms`
+ *   (`currentMs`, by name), and the median as the proposed `ms` once at least
+ *   `minSamples` devices measured the effect.
+ */
+export function analyzeLabWork(rawRows, options, currentMs = {}) {
+  const rows = rawRows.map(normalizeLab);
+  const { cal } = pickCal(rows, options.cal);
+  const protocolCounts = {};
+  for (const r of rows) protocolCounts[r.protocol] = (protocolCounts[r.protocol] ?? 0) + 1;
+  const runs = rows.filter((r) => r.protocol === 2 && r.cal === cal && r.score !== null && (r.steps.get("baseline")?.workMeanMs ?? null) !== null);
+  const names = [...new Set(runs.flatMap((r) => [...r.steps.keys()]))].filter((n) => !LAB_BASELINES.includes(n)).sort();
+  const effects = names.map((name) => {
+    const msAt100 = runs
+      .filter((r) => (r.steps.get(name)?.workMeanMs ?? null) !== null)
+      .map((r) => (Math.max(0, r.steps.get(name).workMeanMs - r.steps.get("baseline").workMeanMs) * Math.max(r.score, 1)) / 100);
+    const medianMs = percentile(msAt100, 50);
+    return {
+      name,
+      devices: msAt100.length,
+      medianMs,
+      p90Ms: percentile(msAt100, 90),
+      currentMs: currentMs[name] ?? null,
+      proposedMs: msAt100.length >= options.minSamples ? medianMs : null,
+    };
+  });
+  return { protocolCounts, cal, runs: runs.length, effects };
+}
+
 /** Library default reference rates, overridden by the worker's calibration patch when it has any. */
 function defaultReference(patchUrl) {
   const reference = {};
@@ -281,6 +340,15 @@ function defaultReference(patchUrl) {
     // No patch.
   }
   return reference;
+}
+
+/** Current effect ms from the site's sources; none when the file is missing (the script run outside the repository). */
+function currentEffectMs(effectsUrl) {
+  try {
+    return parseEffectMs(readFileSync(effectsUrl, "utf8"));
+  } catch {
+    return {};
+  }
 }
 
 function parseArgs(argv) {
@@ -389,6 +457,26 @@ function printLab(result, options) {
   return out.join("\n");
 }
 
+function printLabWork(result, options) {
+  const out = [];
+  out.push(`Lab protocols: ${Object.entries(result.protocolCounts).map(([k, v]) => `${k}=${v}`).join(", ") || "-"}`);
+  out.push(`Protocol 2 runs analyzed (cal ${result.cal}, with a baseline work sample): ${result.runs}`);
+  out.push("");
+  out.push("Main-thread work per frame: the step's mean work per frame minus the run's baseline mean, floored at 0,");
+  out.push("scaled to the score 100 device as docs/src/effects.ts models it (ms at 100 = cost x score / 100).");
+  out.push(`Median and p90 across devices, the current ms in docs/src/effects.ts, and the median as the proposed ms`);
+  out.push(`once at least ${options.minSamples} devices measured the effect.`);
+  out.push("  effect                 devices  median     p90  current  proposed");
+  for (const e of result.effects) {
+    const proposed = e.proposedMs === null ? `not enough devices (${e.devices} of ${options.minSamples})` : fmt(e.proposedMs, 2).padStart(8);
+    out.push(`  ${e.name.padEnd(22)} ${String(e.devices).padStart(7)}  ${fmt(e.medianMs, 2).padStart(6)}  ${fmt(e.p90Ms, 2).padStart(6)}  ${fmt(e.currentMs, 2).padStart(7)}  ${proposed}`);
+  }
+  out.push("");
+  out.push("Notes: work covers the page's JavaScript, style, layout and paint on the main thread; compositor and GPU");
+  out.push("work (backdrop blur, for one) is not in it, so such effects read near 0 here. `all` has no current ms of its own.");
+  return out.join("\n");
+}
+
 function main() {
   let parsed;
   try {
@@ -412,7 +500,11 @@ function main() {
     }
     sections.push(print(analyze(readRows(readFileSync(file, "utf8")), options), options));
   }
-  if (lab) sections.push(printLab(analyzeLab(readRows(readFileSync(lab, "utf8")), options), options));
+  if (lab) {
+    const rows = readRows(readFileSync(lab, "utf8"));
+    sections.push(printLab(analyzeLab(rows, options), options));
+    sections.push(printLabWork(analyzeLabWork(rows, options, currentEffectMs(new URL("../docs/src/effects.ts", import.meta.url))), options));
+  }
   console.log(sections.join("\n\n"));
 }
 

@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import type { Env } from "../src/handler";
 
@@ -10,7 +10,8 @@ export class SqliteD1 {
   readonly statements: { sql: string; params: SQLInputValue[] }[] = [];
 
   constructor() {
-    for (const file of ["0001_reports.sql", "0002_lab.sql"]) this.db.exec(readFileSync(new URL("../migrations/" + file, import.meta.url), "utf8"));
+    const dir = new URL("../migrations/", import.meta.url);
+    for (const file of readdirSync(dir).filter((f) => f.endsWith(".sql")).sort()) this.db.exec(readFileSync(new URL(file, dir), "utf8"));
   }
 
   prepare(sql: string) {

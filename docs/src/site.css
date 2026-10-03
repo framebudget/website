@@ -1911,6 +1911,12 @@ h3 {
   display: none;
 }
 
+/* Five columns on a wide screen: a number never wraps inside its cell. */
+.lab-results td[data-label] {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
 @media (max-width: 720px) {
   /* A compact panel: it holds at the bottom of the screen, so the track above it must stay visible. */
   .lab-panel {
@@ -1994,15 +2000,15 @@ h3 {
     min-height: 38vh;
   }
 
-  /* Four columns do not fit a phone: the step names a row, the three numbers sit under it. */
+  /* Five columns do not fit a phone: the step names a row, the four numbers sit under it, two by two. */
   .lab-results thead {
     display: none;
   }
 
   .lab-results tr {
     display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 2px var(--space-3);
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--space-2) var(--space-3);
     padding-block: var(--space-3);
     border-bottom: var(--border-hairline);
   }

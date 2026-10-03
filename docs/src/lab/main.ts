@@ -4,7 +4,7 @@ import { version } from "framebudget/package.json";
 import { reducedMotion } from "../loop";
 import { loadMotion } from "../motion";
 import { forceEffects } from "../state";
-import { createRun, LabError } from "./api";
+import { createRun, LabError, PROTOCOL } from "./api";
 import { deviceReport, waitForWarm } from "./device";
 import { contributed, markContributed } from "./flag";
 import { measureRefresh } from "./measure";
@@ -53,7 +53,7 @@ function mountLab(): void {
       await whenVisible();
       refreshHz = await measureRefresh();
     }
-    const run = await createRun({ turnstile: token, lib: version, cal, device: deviceReport(snap, refreshHz) });
+    const run = await createRun({ turnstile: token, lib: version, cal, protocol: PROTOCOL, device: deviceReport(snap, refreshHz) });
     const reports = await runSteps(run, refreshHz, stage, (index, step) =>
       view.progress(`Step ${index + 1} of ${STEPS.length}: ${step.label}`),
     );
