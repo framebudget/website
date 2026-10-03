@@ -1,5 +1,5 @@
 {
-  "name": "framebudget-worker",
+  "name": "framebudget-website",
   "private": true,
   "version": "0.1.0",
   "type": "module",
@@ -8,11 +8,14 @@
     "migrate:local": "wrangler d1 migrations apply framebudget --local",
     "test": "vitest run",
     "typecheck": "tsc --noEmit && tsc --noEmit -p test",
-    "deploy": "wrangler deploy"
+    "deploy": "wrangler deploy",
+    "site:dev": "npm run dev --prefix docs",
+    "site:build": "npm run build --prefix docs"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20261003.1",
     "@types/node": "^22.20.5",
+    "framebudget": "https://github.com/framebudget/core/releases/download/v0.2.1/framebudget-framebudget-0.2.1.tgz",
     "typescript": "^5.9.3",
     "vitest": "^4.1.11",
     "wrangler": "^4.147.0"

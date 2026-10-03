@@ -1,0 +1,104 @@
+# Gates for pull requests that are ready for review. Draft pull requests skip
+# every job; marking one ready for review starts the run.
+#
+#   changes   which parts the pull request touches (git diff against the base)
+#   site      installs and builds the website (docs/)
+#   worker    typecheck and tests of the Cloudflare Worker (the repository root)
+#   gate      one required check: fails when a job that ran failed, passes when the rest skipped
+#
+# Both projects install the library from the framebudget/core release tarball
+# that their lockfiles pin by integrity; no registry token is needed.
+name: CI
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions: {}
+
+jobs:
+  changes:
+    name: Detect changes
+    if: github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      site: ${{ steps.filter.outputs.site }}
+      worker: ${{ steps.filter.outputs.worker }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Classify the changed files
+        id: filter
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          files=$(git diff --name-only "$BASE_SHA...$HEAD_SHA")
+          printf 'Changed files:\n%s\n' "$files"
+          matches() { printf '%s\n' "$files" | grep -qE "$1" && echo true || echo false; }
+          # A change to this workflow runs everything, so the gates themselves get tested.
+          ci='^\.github/workflows/ci\.yml$'
+          # The Worker is the root project; release.config.json lists the same paths.
+          worker='^(src/|test/|migrations/|scripts/|(wrangler\.jsonc|calibration\.json|package(-lock)?\.json|tsconfig\.json|vitest\.config\.ts)$)'
+          {
+            echo "site=$(matches "^docs/|$ci")"
+            echo "worker=$(matches "$worker|$ci")"
+          } >> "$GITHUB_OUTPUT"
+
+  site:
+    name: Site
+    needs: changes
+    if: needs.changes.outputs.site == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: docs/package-lock.json
+      - run: npm ci --prefix docs
+      - run: npm run build --prefix docs
+
+  worker:
+    name: Worker
+    needs: changes
+    if: needs.changes.outputs.worker == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+
+  gate:
+    name: CI
+    needs: [changes, site, worker]
+    if: always() && github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - name: Fail when a gate failed
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "Job results: $RESULTS"
+          case " $RESULTS " in
+            *" failure "* | *" cancelled "*) exit 1 ;;
+          esac

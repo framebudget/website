@@ -1,0 +1,272 @@
+# Runs when a release tag vX.Y.Z is pushed by hand (in order). Website versions
+# are independent of the library's. Immutable releases are on: once published, a
+# release's assets and tag can never change, so every asset is built and attached
+# to a draft first, and publishing the draft is the last step. GitHub then signs a
+# release attestation over the tag, the commit and every asset; each asset also
+# gets a build provenance attestation.
+#
+# The release tooling comes from framebudget/core (scripts/release/, at main) and
+# the release card template from framebudget/assets (brand/build/release.html).
+#
+#   validate  no release for the tag yet, tag format and order, bump warning
+#   notes     release notes, release card, changelog pull request (release/vX.Y.Z)
+#   deploy    worker tests, site build, the site tarball, D1 migrations, wrangler deploy
+#   release   draft with notes, card, site tarball and SHA256SUMS, then publish (immutable)
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions: {}
+
+env:
+  TAG: ${{ github.ref_name }}
+
+jobs:
+  validate:
+    name: Validate the tag
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.check.outputs.version }}
+      prerelease: ${{ steps.check.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/checkout@v7
+        with:
+          repository: framebudget/core
+          ref: main
+          path: .release-tools
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - name: Refuse a tag that already has a release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "::error::$TAG already has a release; immutable releases cannot be replaced. Push a new tag."
+            exit 1
+          fi
+      - name: Check the tag and classify the commits
+        id: check
+        run: node .release-tools/scripts/release/notes.mjs --tag "$TAG" --check
+
+  notes:
+    name: Release notes and changelog
+    needs: validate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      VERSION: ${{ needs.validate.outputs.version }}
+      BASE: ${{ github.event.repository.default_branch }}
+    steps:
+      # The changelog pull request builds on the default branch; the full history
+      # and tags are needed to find the previous release.
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          fetch-depth: 0
+      - uses: actions/checkout@v7
+        with:
+          repository: framebudget/core
+          ref: main
+          path: .release-tools
+          persist-credentials: false
+      - uses: actions/checkout@v7
+        with:
+          repository: framebudget/assets
+          path: .brand
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - name: Write the changelog and the release notes
+        run: |
+          art_name="framebudget-website-$TAG.png"
+          date=$(date -u +%F)
+          echo "ART_NAME=$art_name" >> "$GITHUB_ENV"
+          echo "DATE=$date" >> "$GITHUB_ENV"
+          node .release-tools/scripts/release/notes.mjs --tag "$TAG" --date "$date" --out-dir "$RUNNER_TEMP/release" \
+            --art-url "https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG/$art_name"
+      - name: Render the release card
+        run: |
+          node .release-tools/scripts/release/render-art.mjs --template .brand/brand/build/release.html \
+            --version "$VERSION" --date "$DATE" --notes "$RUNNER_TEMP/release/notes.json" \
+            --out "$RUNNER_TEMP/release/$ART_NAME"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-notes
+          path: |
+            ${{ runner.temp }}/release/release-body.md
+            ${{ runner.temp }}/release/${{ env.ART_NAME }}
+          if-no-files-found: error
+      # REST only: the GraphQL API behind `gh pr` is rate limited for this owner.
+      - name: Open the changelog pull request
+        run: |
+          branch="release/$TAG"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch --create "$branch"
+          git add CHANGELOG.md
+          if git diff --cached --quiet; then
+            echo "Nothing to commit: $BASE already has the $TAG changelog."
+            exit 0
+          fi
+          git commit --message "chore(release): $TAG" --message "- prepend $TAG to CHANGELOG.md"
+          git push --force origin "$branch"
+          open_pr=$(gh api "repos/$GITHUB_REPOSITORY/pulls?state=open&head=$GITHUB_REPOSITORY_OWNER:$branch" \
+            --jq '.[0].number // empty')
+          if [ -n "$open_pr" ]; then
+            gh api --method PATCH "repos/$GITHUB_REPOSITORY/pulls/$open_pr" \
+              -F "body=@$RUNNER_TEMP/release/pr-body.md" --silent
+          else
+            gh api --method POST "repos/$GITHUB_REPOSITORY/pulls" -f "base=$BASE" -f "head=$branch" \
+              -f "title=chore(release): $TAG" -F "body=@$RUNNER_TEMP/release/pr-body.md" --jq .html_url
+          fi
+
+  deploy:
+    name: Deploy to Cloudflare
+    needs: validate
+    runs-on: ubuntu-latest
+    environment: production
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      SITE_TARBALL: framebudget-website-${{ github.ref_name }}.tar.gz
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            docs/package-lock.json
+      # The Worker is the root project; the site is docs/. The library comes from the
+      # core release tarball the lockfiles pin by integrity.
+      - name: Install
+        run: |
+          npm ci
+          npm ci --prefix docs
+      # Registry signatures of every installed dependency, and no known high
+      # severity advisory in what the site and the Worker ship with.
+      - name: Audit
+        run: |
+          for dir in . docs; do
+            (cd "$dir" && npm audit signatures && npm audit --omit=dev --audit-level=high)
+          done
+      - run: npm test
+      - run: npm run build --prefix docs
+      # The exact docs/dist that wrangler deploys, packed reproducibly (sorted, no
+      # owners, the commit's time) so the same commit packs to the same bytes.
+      - name: Pack the site
+        run: |
+          set -o pipefail
+          mkdir -p "$RUNNER_TEMP/site"
+          tar --sort=name --owner=0 --group=0 --numeric-owner --mtime="@$(git log -1 --format=%ct)" \
+            -C docs -cf - dist | gzip -n > "$RUNNER_TEMP/site/$SITE_TARBALL"
+          tar -tzf "$RUNNER_TEMP/site/$SITE_TARBALL" | grep -qx 'dist/index.html'
+          ls -l "$RUNNER_TEMP/site"
+      # Build provenance: a signed statement that this workflow run built this
+      # tarball from the tagged commit (public repositories only).
+      - uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: ${{ runner.temp }}/site/${{ env.SITE_TARBALL }}
+      - uses: actions/upload-artifact@v7
+        with:
+          name: site
+          path: ${{ runner.temp }}/site/${{ env.SITE_TARBALL }}
+          if-no-files-found: error
+      - name: Apply the D1 migrations
+        run: npx wrangler d1 migrations apply framebudget --remote
+      - name: Deploy the worker and the site
+        run: npx wrangler deploy
+
+  release:
+    name: Publish the release
+    needs: [validate, notes, deploy]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      PRERELEASE: ${{ needs.validate.outputs.prerelease }}
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: release-notes
+          path: assets
+      - uses: actions/download-artifact@v8
+        with:
+          name: site
+          path: assets
+      - name: Checksums and integrity notes
+        run: |
+          mv assets/release-body.md body.md
+          (cd assets && sha256sum -- * > SHA256SUMS)
+          {
+            echo
+            echo "## Integrity"
+            echo
+            echo "This release is immutable: its tag and assets cannot change after publishing, and GitHub signs a release attestation over them. Every asset was built by the [release workflow run]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID) from the tagged commit and carries a build provenance attestation; the site tarball is the exact \`docs/dist\` deployed to framebudget.dev."
+            echo
+            echo '```sh'
+            echo "gh release verify $TAG --repo $GITHUB_REPOSITORY"
+            echo "gh release verify-asset $TAG <file> --repo $GITHUB_REPOSITORY"
+            echo "gh attestation verify <file> --repo $GITHUB_REPOSITORY"
+            echo '```'
+            echo
+            echo '```'
+            cat assets/SHA256SUMS
+            echo '```'
+          } >> body.md
+          cat assets/SHA256SUMS
+      # The site tarball got its provenance where it was built; the card and the checksums get theirs here.
+      - uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: |
+            assets/*.png
+            assets/SHA256SUMS
+      - name: Create the draft with every asset
+        run: |
+          flags=()
+          if [ "$PRERELEASE" = "true" ]; then flags+=(--prerelease); fi
+          gh release create "$TAG" assets/* --repo "$GITHUB_REPOSITORY" --draft --verify-tag \
+            --title "$TAG" --notes-file body.md "${flags[@]}"
+      - name: Publish the release
+        run: gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false
+      # GitHub signs the release attestation a moment after publishing; wait for
+      # it (up to about two minutes) before verifying the release and each asset.
+      - name: Verify the release attestation
+        run: |
+          for attempt in $(seq 1 12); do
+            if gh release verify "$TAG" --repo "$GITHUB_REPOSITORY"; then break; fi
+            if [ "$attempt" -eq 12 ]; then
+              echo "::error::No release attestation for $TAG after waiting."
+              exit 1
+            fi
+            sleep 10
+          done
+          for file in assets/*; do
+            gh release verify-asset "$TAG" "$file" --repo "$GITHUB_REPOSITORY"
+            gh attestation verify "$file" --repo "$GITHUB_REPOSITORY"
+          done

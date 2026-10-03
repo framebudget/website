@@ -1,0 +1,22 @@
+{
+  "label": "Website release",
+  "sections": [
+    { "id": "site", "title": "Site", "paths": ["docs/"] },
+    {
+      "id": "worker",
+      "title": "Worker",
+      "paths": [
+        "src/",
+        "test/",
+        "migrations/",
+        "scripts/",
+        "wrangler.jsonc",
+        "calibration.json",
+        "package.json",
+        "package-lock.json",
+        "tsconfig.json",
+        "vitest.config.ts"
+      ]
+    }
+  ]
+}

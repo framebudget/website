@@ -4,11 +4,11 @@ The landing page and API reference for framebudget. The page is also a demo of t
 
 ## Commands
 
-Run these in `docs/`. The site uses the library from the repository root through a `file:..` dependency, so build the library first (`npm run build` at the repository root).
+Run these in `docs/`. The site depends on the published library: `framebudget` in `package.json` is the 0.2.1 release tarball of framebudget/core, pinned by integrity in `package-lock.json` (see the repository `README.md`). The library's source is [github.com/framebudget/core](https://github.com/framebudget/core).
 
 | Command | What it does |
 | --- | --- |
-| `npm install` | Installs Vite, TypeScript, `motion` and `cuelume`, and links `framebudget` from the repository root. |
+| `npm ci` | Installs Vite, TypeScript, `motion`, `cuelume` and `framebudget` exactly as `package-lock.json` pins them. |
 | `npm run dev` | Starts the Vite dev server with hot reload. |
 | `npm run build` | Type-checks, then writes the static site to `dist/`. |
 | `npm run serve` | Serves `dist/` with gzip and long-lived caching for hashed assets, like a production host. Extensionless paths serve the matching page (`/api` serves `api.html`) and missing paths get `404.html` with status 404, like the Worker. Optional port: `npm run serve -- 8080`. |
@@ -47,7 +47,7 @@ The thresholds sit between the simulator's presets (Flagship 2025 240, Upper mid
 
 ## Sharing measurements
 
-The site enables framebudget's telemetry for its own visitors (`src/share.ts`, `src/setup.ts`): `endpoint: "/api/report"`, `sampleRate: 1`, `minIntervalDays: 7`, `calibrationUrl: "/api/calibration"`, served by the Worker in `worker/`. A notice at the bottom of the first visit says what is measured and links to `privacy.html`; **Don't share** stores `framebudget-site-share=off` in `localStorage` and calls `configure({ share: null })`, so nothing is sent from that moment on. The privacy page has the same control. GPC and Save-Data are honored by the library.
+The site enables framebudget's telemetry for its own visitors (`src/share.ts`, `src/setup.ts`): `endpoint: "/api/report"`, `sampleRate: 1`, `minIntervalDays: 7`, `calibrationUrl: "/api/calibration"`, served by the Worker at the repository root (see the root `README.md`). A notice at the bottom of the first visit says what is measured and links to `privacy.html`; **Don't share** stores `framebudget-site-share=off` in `localStorage` and calls `configure({ share: null })`, so nothing is sent from that moment on. The privacy page has the same control. GPC and Save-Data are honored by the library.
 
 ## Sound
 
@@ -58,16 +58,16 @@ The site enables framebudget's telemetry for its own visitors (`src/share.ts`, `
 - Each page has `<!-- fb:seo:home|api|privacy -->` in its `<head>`. `vite.config.ts` replaces it with the output of `seoHead()` from `src/seo.ts`: canonical URL, `robots` meta, Open Graph and Twitter tags (absolute `og.png`, 1200x630), the `llms.txt` alternate link, the apple-touch-icon and manifest links, and JSON-LD (`WebSite`, `SoftwareSourceCode`, and a `WebPage` or `TechArticle`). The title and description come from the page's own `<title>` and `<meta name="description">`, so edit those in the HTML.
 - Canonicals and the sitemap use the paths the Worker serves with `html_handling: "auto-trailing-slash"`: `/`, `/api` and `/privacy`. Link pages the same way, without `.html`.
 - `public/robots.txt` allows everything except `/api/` (the Worker's endpoints; `/api` itself is the API reference page) and points to `public/sitemap.xml`. Add new pages to the sitemap and to `PATHS` in `src/seo.ts`.
-- `public/llms.txt` follows [llmstxt.org](https://llmstxt.org): a short summary and links for AI agents. The plugin in `src/llms.ts` derives two more files at build time (and serves them in `npm run dev`), so nothing is copied by hand: `llm.txt`, the same content for agents that ask for that name, and `llms-full.txt`, the root `README.md` without its Development section under a short header.
+- `public/llms.txt` follows [llmstxt.org](https://llmstxt.org): a short summary and links for AI agents. The plugin in `src/llms.ts` derives two more files at build time (and serves them in `npm run dev`), so nothing is copied by hand: `llm.txt`, the same content for agents that ask for that name, and `llms-full.txt`, the `README.md` of the installed `framebudget` package without its Development section under a short header. Upgrading the library upgrades this file.
 - `public/site.webmanifest` lists `logo/icon-192.png` and `logo/icon-512.png`. Those and `logo/apple-touch-icon.png` (180x180) are `mark.svg` rendered as a full-bleed square on Ink, since iOS rounds the corners itself.
 
 ## Error pages
 
 `404.html` and `500.html` are pages of the build like the others: same header, footer, dock, stylesheet and scripts (`nav:error` renders the header with no current link). Their head uses `<!-- fb:seo:error -->`, which renders `<meta name="robots" content="noindex">` and the shared links, without a canonical or social tags, and they stay out of `public/sitemap.xml`. Every URL in them is root-relative, since they are served at whatever path failed.
 
-- `404.html`: the asset layer serves it with status 404 for any path with no matching file (`not_found_handling: "404-page"` in `worker/wrangler.jsonc`), and so does `npm run serve`. A small inline script shows the requested path (`location.pathname`, set with `textContent`).
-- `500.html`: the Worker serves it with status 500 when it fails while answering a page load (see `worker/README.md`). The retry button reloads the page.
+- `404.html`: the asset layer serves it with status 404 for any path with no matching file (`not_found_handling: "404-page"` in the root `wrangler.jsonc`), and so does `npm run serve`. A small inline script shows the requested path (`location.pathname`, set with `textContent`).
+- `500.html`: the Worker serves it with status 500 when it fails while answering a page load (see "Routing and errors" in the root `README.md`). The retry button reloads the page.
 
 ## Assets
 
-The fonts (Archivo and Martian Mono, SIL Open Font License 1.1), logos, favicon and `og.png` are copied from `../assets/brand/` into `public/`. `src/tokens.css` is a copy of `../assets/brand/tokens.css` with root-relative font paths. Nothing is loaded from a CDN.
+The fonts (Archivo and Martian Mono, SIL Open Font License 1.1), logos, favicon and `og.png` are copied from `brand/` in [github.com/framebudget/assets](https://github.com/framebudget/assets) into `public/`. `src/tokens.css` is a copy of that repository's `brand/tokens.css` with root-relative font paths. Nothing is loaded from a CDN.

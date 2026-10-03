@@ -1,4 +1,5 @@
-import { describe, expect, it } from "vitest";
+import { createBudget, type CreateBudgetOptions, type TelemetryReport } from "framebudget";
+import { describe, expect, it, vi } from "vitest";
 import { validateReport } from "../src/validate";
 import { validReport } from "./helpers";
 
@@ -18,32 +19,53 @@ const variant = (mutate: Mutate) => {
   return validateReport(JSON.parse(JSON.stringify(r)));
 };
 
+/**
+ * A loaded page with just enough browser for the library: a real clock for the
+ * benchmark, timers that run when the test drains them, event listeners it can
+ * fire, and a navigator whose sendBeacon records what the library sends. No
+ * DOM types are needed.
+ */
+function fakePage() {
+  const listeners: Record<string, (() => void)[]> = {};
+  const timers: (() => void)[] = [];
+  const beacons: { url: string; body: string }[] = [];
+  const addEventListener = (type: string, listener: () => void) => (listeners[type] ??= []).push(listener);
+  const scope = {
+    document: { readyState: "complete", visibilityState: "visible", addEventListener },
+    navigator: {
+      hardwareConcurrency: 8,
+      deviceMemory: 4,
+      sendBeacon: (url: string, body: string) => beacons.push({ url, body }) > 0,
+    },
+    location: { search: "" },
+    performance: { now: () => performance.now() },
+    matchMedia: () => ({ matches: false, addEventListener() {} }),
+    setTimeout: (callback: () => void) => timers.push(callback),
+    addEventListener,
+  } as unknown as NonNullable<CreateBudgetOptions["scope"]>;
+  return { scope, listeners, timers, beacons };
+}
+
 describe("validateReport", () => {
-  it("accepts the report the library's buildReport produces", async () => {
-    // Imported through a runtime path so the worker typecheck stays free of DOM types.
-    const lib = new URL("../../src/core/telemetry/build-report.ts", import.meta.url).href;
-    const { buildReport } = (await import(lib)) as { buildReport: (input: unknown) => unknown };
-    const bench = (score: number) => ({
-      score,
-      rates: { float: 7134.2, typed: 151234, alloc: 18234.5, path: 3011.7 },
-      tickMs: 0.1000001,
-      rounds: 5,
-      sink: 1,
+  it("accepts the report the library sends", async () => {
+    const page = fakePage();
+    const budget = createBudget({ scope: page.scope, random: () => 0, pause: () => Promise.resolve() });
+    budget.configure({ share: { endpoint: "/api/report", sampleRate: 1 }, governor: { auto: false } });
+    // Load runs on a timer; after the warm benchmark, sharing arms the report on pagehide.
+    await vi.waitFor(() => {
+      page.timers.splice(0).forEach((timer) => timer());
+      expect(page.listeners.pagehide).toBeDefined();
     });
-    const report = buildReport({
-      calibration: { version: "provisional-1" },
-      score: 61.6,
-      cold: bench(48.2),
-      warm: bench(66.4),
-      hints: { cores: 8, memoryGb: 4, reducedMotion: false, gpc: false, saveData: false },
-      pressure: undefined,
-      tier: "Medium",
-      effects: ["hover", "entrances", "canvasLowRes"],
-      stepped: ["canvasLowRes"],
-      fps: { main: 58.4, canvasLowRes: 41.6 },
-    });
-    // sendBeacon sends JSON.stringify(report), which drops undefined keys.
-    expect(validateReport(JSON.parse(JSON.stringify(report)))).not.toBeNull();
+    page.listeners.pagehide!.forEach((listener) => listener());
+
+    expect(page.beacons.map((b) => b.url)).toEqual(["/api/report"]);
+    const report = JSON.parse(page.beacons[0]!.body) as TelemetryReport;
+    // The real benchmark and the default effects: kernel rates, a warm score and allowed effects all present.
+    expect(report.warm).not.toBeNull();
+    expect(Object.keys(report.kernels).length).toBeGreaterThan(0);
+    expect(report.effects.length).toBeGreaterThan(0);
+    expect(report.effects).toEqual([...budget.effects()].sort());
+    expect(validateReport(report)).not.toBeNull();
   });
 
   it("accepts minimal reports: no bench, no optional hints, empty lists", () => {

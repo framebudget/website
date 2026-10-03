@@ -10,8 +10,8 @@
     { "pattern": "www.framebudget.dev", "custom_domain": true }
   ],
   "assets": {
-    // Vite output of the landing site. Build it first: npm run build at the root, then npm run build in docs/.
-    "directory": "../docs/dist",
+    // Vite output of the landing site (docs/). Build it first: npm ci --prefix docs && npm run site:build.
+    "directory": "./docs/dist",
     "binding": "ASSETS",
     // Static files are served by the asset layer without invoking the Worker (free, not
     // counted against Worker requests). Only /api/* runs the Worker; every other path stays
