@@ -5,6 +5,7 @@ import { mountChart } from "./chart";
 import { mountDock, mountSoundToggle } from "./dock";
 import { mountEffects } from "./fx";
 import { preloadMotion } from "./motion";
+import { mountShareControl, mountShareNote } from "./share";
 import { mountHome } from "./sim";
 import { mountSound } from "./sound";
 
@@ -15,3 +16,5 @@ mountChart();
 mountHome();
 mountEffects();
 preloadMotion();
+mountShareNote();
+mountShareControl();

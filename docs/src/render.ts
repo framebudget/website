@@ -7,7 +7,7 @@
  */
 import { defaultCalibration } from "framebudget";
 import { RESERVES } from "./copy";
-import { DEVICES, LADDER_MAX, SITE_EFFECTS } from "./effects";
+import { DEVICES, LADDER_MAX, SITE_EFFECTS, TIER_FLOORS } from "./effects";
 
 const esc = (s: string): string => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 
@@ -15,7 +15,7 @@ const LOCKUP = `<img src="/logo/lockup-dark.svg" alt="framebudget" width="158" h
 
 const SPEAKER = `<svg class="sound-icon" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" focusable="false"><path class="sound-icon__body" d="M4 9.5h3.2L12 5.5v13l-4.8-4H4z"/><path class="sound-icon__wave sound-icon__wave--1" d="M15.2 9.3a3.6 3.6 0 0 1 0 5.4"/><path class="sound-icon__wave sound-icon__wave--2" d="M17.6 6.9a7 7 0 0 1 0 10.2"/><path class="sound-icon__mute" d="M15.5 9.5l5 5m0-5l-5 5"/></svg>`;
 
-export function nav(page: "home" | "api"): string {
+export function nav(page: "home" | "api" | "privacy"): string {
   const current = (p: string): string => (p === page ? ` aria-current="page"` : "");
   return `<header class="nav">
   <div class="shell nav__inner">
@@ -24,7 +24,7 @@ export function nav(page: "home" | "api"): string {
       <a class="nav__section" href="/#how">How it works</a>
       <a class="nav__section" href="/#simulator">Simulator</a>
       <a class="nav__section" href="/#code">Code</a>
-      <a href="/api.html"${current("api")} data-cuelume-navigate>API</a>
+      <a href="/api"${current("api")} data-cuelume-navigate>API</a>
     </nav>
     <button class="sound-toggle press" type="button" aria-pressed="true" aria-describedby="sound-state" data-sound-toggle data-cuelume-toggle>${SPEAKER}<span class="visually-hidden">Interface sounds</span></button>
     <span class="visually-hidden" id="sound-state" data-sound-state></span>
@@ -46,7 +46,8 @@ export function footer(): string {
       <a href="/#code">Code</a>
       <a href="/#effects">Effects and tiers</a>
       <a href="/#faq">Questions</a>
-      <a href="/api.html">API reference</a>
+      <a href="/api">API reference</a>
+      <a href="/privacy">Privacy</a>
     </nav>
     <p class="footer__legal">framebudget is MIT licensed. Archivo and Martian Mono are used under the SIL Open Font License 1.1. Interface sounds by cuelume.</p>
   </div>
@@ -64,13 +65,31 @@ export function dock(): string {
 </aside>`;
 }
 
-/** The device picker: a segmented control whose thumb slides between equal segments. */
-export function picker(labelId: string): string {
-  const buttons = DEVICES.map((d) => {
-    const short = d.id === "real" ? "Mine" : d.id === "mid" ? "Mid" : d.id === "budget" ? "2019" : d.name;
-    return `<button type="button" class="press" aria-pressed="${d.score === null}" data-score="${d.score ?? ""}" data-cuelume-select><span class="picker__name"><span class="picker__long">${d.name}</span><span class="picker__short" aria-hidden="true">${short}</span></span><span class="picker__score num num--3"${d.score === null ? " data-picker-real" : ""}>${d.score ?? "..."}</span></button>`;
+/**
+ * The first-visit notice about anonymous measurements (share.ts). Hidden in
+ * the markup and fixed when shown, so it never shifts the page.
+ */
+export function shareNote(): string {
+  return `<aside class="share-note" aria-label="Anonymous measurements" hidden data-share-note>
+  <p class="share-note__text">This page shares anonymous frame measurements from your device to calibrate framebudget. <a href="/privacy">What is measured</a></p>
+  <span class="share-note__actions">
+    <button class="share-note__no press" type="button" data-share-no data-cuelume-toggle>Don't share</button>
+    <button class="share-note__ok press" type="button" data-share-ok data-cuelume-tap>OK</button>
+  </span>
+</aside>`;
+}
+
+/**
+ * The device picker: a segmented control whose thumb slides between equal
+ * segments. The hero's horizontal picker has room for the five `hero` devices;
+ * the simulator's vertical one lists them all.
+ */
+export function picker(labelId: string, heroOnly: boolean): string {
+  const devices = DEVICES.filter((d) => !heroOnly || d.hero);
+  const buttons = devices.map((d) => {
+    return `<button type="button" class="press" aria-pressed="${d.score === null}" data-score="${d.score ?? ""}" data-cuelume-select><span class="picker__name"><span class="picker__long">${d.name}</span><span class="picker__short" aria-hidden="true">${d.short}</span></span><span class="picker__score num num--3"${d.score === null ? " data-picker-real" : ""}>${d.score ?? "..."}</span></button>`;
   }).join("");
-  return `<div class="segmented segmented--5 picker" role="group" aria-labelledby="${labelId}" data-picker><span class="segmented__thumb" aria-hidden="true"></span>${buttons}</div>`;
+  return `<div class="segmented picker" style="--n:${devices.length}" role="group" aria-labelledby="${labelId}" data-picker><span class="segmented__thumb" aria-hidden="true"></span>${buttons}</div>`;
 }
 
 export function ladder(): string {
@@ -92,7 +111,7 @@ export function simRows(): string {
 const TIERS = ["Lite", "Medium", "High", "Full"] as const;
 
 export function registry(): string {
-  const floors = defaultCalibration.tiers;
+  const floors = TIER_FLOORS;
   const head = `<thead><tr><th scope="col">Effect</th><th scope="col">What it does</th><th scope="col" class="r">Threshold</th><th scope="col" class="r">Cost</th>${TIERS.map((t) => `<th scope="col" class="c" data-tier-col="${t}">${t} <span class="registry__floor">${floors[t]}</span></th>`).join("")}</tr></thead>`;
   const body = SITE_EFFECTS.map((fx) => {
     const cells = TIERS.map((t) => {

@@ -27,21 +27,27 @@ Run these in `site/`. The site uses the library from `../packages/framebudget` t
 
 | Name | Label | Threshold | Cost | Flags |
 | --- | --- | --- | --- | --- |
-| `hover` | Hover states | 20 | 1 | |
-| `counters` | Counting numbers | 25 | 1 | motion |
-| `canvasLowRes` | Frame chart, 1x | 30 | 3 | motion |
-| `entrances` | Staggered reveals | 35 | 2 | motion |
-| `morph` | Morphing controls | 40 | 2 | motion |
-| `shimmer` | Deadline glow | 45 | 2 | motion |
-| `sound` | Interface sounds | 50 | 1 | data |
-| `textReveal` | Text reveals | 52 | 2 | motion |
-| `pageTransition` | Page transitions | 55 | 3 | motion |
-| `springs` | Spring presses | 60 | 3 | motion |
-| `magnetic` | Magnetic buttons | 65 | 2 | motion |
-| `parallax` | Parallax | 70 | 5 | motion |
-| `spotlight` | Cursor spotlight | 80 | 4 | motion |
-| `blur` | Backdrop blur | 90 | 6 | |
-| `canvasHiRes` | Frame chart, full res | 120 | 8 | motion, data |
+| `hover` | Hover states | 10 | 1 | |
+| `counters` | Counting numbers | 12 | 1 | motion |
+| `sound` | Interface sounds | 20 | 1 | data |
+| `entrances` | Staggered reveals | 24 | 2 | motion |
+| `canvasLowRes` | Frame chart, 1x | 32 | 3 | motion |
+| `shimmer` | Deadline glow | 38 | 2 | motion |
+| `textReveal` | Text reveals | 46 | 2 | motion |
+| `morph` | Morphing controls | 49 | 2 | motion |
+| `pageTransition` | Page transitions | 62 | 3 | motion |
+| `springs` | Spring presses | 66 | 3 | motion |
+| `magnetic` | Magnetic buttons | 85 | 2 | motion |
+| `parallax` | Parallax | 90 | 5 | motion |
+| `spotlight` | Cursor spotlight | 112 | 4 | motion |
+| `blur` | Backdrop blur | 135 | 6 | |
+| `canvasHiRes` | Frame chart, full res | 180 | 8 | motion, data |
+
+The thresholds sit between the simulator's presets (Flagship 2025 240, Upper mid-range 2023 150, Reference 100, Mid-range 2020 75, Budget 2021 55, Budget 2019 45, Old budget 2017 28, Ancient 15), outside the 10% hysteresis band where the spacing allows, so each step down turns off one or two effects. The site's tier floors follow them: Lite 20, Medium 49, High 90, Full 180. The hero's picker offers five of the presets; the simulator lists all of them.
+
+## Sharing measurements
+
+The site enables framebudget's telemetry for its own visitors (`src/share.ts`, `src/setup.ts`): `endpoint: "/api/report"`, `sampleRate: 1`, `calibrationUrl: "/api/calibration"`, served by the Worker in `worker/`. A notice at the bottom of the first visit says what is measured and links to `privacy.html`; **Don't share** stores `framebudget-site-share=off` in `localStorage` and calls `configure({ share: null })`, so nothing is sent from that moment on. The privacy page has the same control. GPC and Save-Data are honored by the library.
 
 ## Sound
 

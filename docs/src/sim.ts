@@ -1,7 +1,7 @@
 import { budget, type BudgetSnapshot, type ChangeReason, type KernelName } from "framebudget";
 import { compareNote, htmlAttrs, LEARNED, listNames as joinNames, WARM_NOTE } from "./copy";
 import { count } from "./counter";
-import { BY_NAME, DEVICES, FRAME_MS, LADDER_MAX, SITE_EFFECTS, deviceName, frameMs } from "./effects";
+import { BY_NAME, FRAME_MS, LADDER_MAX, SITE_EFFECTS, deviceName, frameMs } from "./effects";
 import { heat, load, onLoad, setLoad, setLoadVisible } from "./load";
 import { setTask, watchVisibility } from "./loop";
 import { mountLog, mountMeter } from "./meter";
@@ -51,11 +51,14 @@ function mountPickers(): void {
     }
   }
   watch((snap) => {
-    const index = DEVICES.findIndex((d) => d.score === snap.simulated);
+    const pressed = snap.simulated === null ? "" : String(snap.simulated);
     for (const picker of pickers) {
+      // The hero picker holds a subset of the devices, so each picker finds its own index.
+      const buttons = all<HTMLButtonElement>("button", picker);
+      const index = buttons.findIndex((b) => b.dataset.score === pressed);
       picker.style.setProperty("--i", String(Math.max(0, index)));
       picker.querySelector<HTMLElement>(".segmented__thumb")!.style.opacity = index < 0 ? "0" : "";
-      all<HTMLButtonElement>("button", picker).forEach((b, i) => b.setAttribute("aria-pressed", String(i === index)));
+      buttons.forEach((b, i) => b.setAttribute("aria-pressed", String(i === index)));
     }
   });
 }

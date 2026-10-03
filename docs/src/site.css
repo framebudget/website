@@ -944,7 +944,8 @@ h3 {
 /* Ladder */
 .ladder {
   --name: 9.5rem;
-  --value: 3ch;
+  /* Three monospaced digits, measured in the row's proportional font. */
+  --value: 4ch;
   position: relative;
   overflow-x: clip;
 }
@@ -1875,6 +1876,79 @@ h3 {
   cursor: pointer;
 }
 
+/* The first-visit notice about anonymous measurements (share.ts). Fixed, so it shifts nothing. */
+.share-note {
+  position: fixed;
+  left: 16px;
+  bottom: 16px;
+  z-index: 44;
+  display: grid;
+  gap: var(--space-3);
+  width: min(420px, calc(100vw - 32px));
+  padding: 12px 12px 12px 14px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: 14px;
+  background: var(--fb-ink-raised);
+  color: var(--fb-chalk);
+  box-shadow: 0 10px 30px rgb(5 7 16 / 0.5), var(--edge-light);
+  font-size: var(--text-sm);
+  line-height: 1.45;
+}
+
+.share-note[hidden] {
+  display: none;
+}
+
+:root[data-framebudget-effects~="blur"] .share-note {
+  background: rgb(31 36 64 / 0.72);
+  -webkit-backdrop-filter: blur(16px) saturate(1.3);
+  backdrop-filter: blur(16px) saturate(1.3);
+}
+
+.share-note:not(.is-shown) {
+  visibility: hidden;
+  opacity: 0;
+  transform: translateY(calc(100% + 24px));
+}
+
+.share-note__text a {
+  color: var(--fb-chalk);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.share-note__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+
+.share-note__actions button {
+  min-height: 40px;
+  padding: 0 14px;
+  border-radius: 8px;
+  font-size: var(--text-sm);
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.share-note__no {
+  border: 1px solid var(--color-border-strong);
+  background: none;
+  color: var(--fb-chalk);
+}
+
+.share-note__ok {
+  border: 0;
+  background: var(--fb-chalk);
+  color: var(--fb-night);
+}
+
+.share-control__state {
+  margin-bottom: var(--space-3);
+}
+
 /* Effects ------------------------------------------------------------------------------ */
 
 /* hover: surfaces answer the pointer (color only, nothing moves). */
@@ -1889,10 +1963,12 @@ h3 {
   :root[data-framebudget-effects~="hover"] .button:hover,
   :root[data-framebudget-effects~="hover"] .switch:hover,
   :root[data-framebudget-effects~="hover"] .copy:hover,
+  :root[data-framebudget-effects~="hover"] .share-note__no:hover,
   :root[data-framebudget-effects~="hover"] .reset__undo:hover {
     border-color: var(--fb-chalk);
   }
 
+  :root[data-framebudget-effects~="hover"] .share-note__ok:hover,
   :root[data-framebudget-effects~="hover"] .button--primary:hover,
   :root[data-framebudget-effects~="hover"] .dock__action:hover {
     background: var(--color-button-hover);
@@ -1958,6 +2034,14 @@ h3 {
   }
 
   :root[data-framebudget-effects~="morph"] .dock:not(.is-shown) {
+    transition: transform var(--dur-16f) var(--ease-drop), opacity var(--dur-16f) linear, visibility 0s linear var(--dur-16f);
+  }
+
+  :root[data-framebudget-effects~="morph"] .share-note {
+    transition: transform 460ms cubic-bezier(0.25, 1.15, 0.4, 1), opacity var(--dur-16f) linear, visibility 0s;
+  }
+
+  :root[data-framebudget-effects~="morph"] .share-note:not(.is-shown) {
     transition: transform var(--dur-16f) var(--ease-drop), opacity var(--dur-16f) linear, visibility 0s linear var(--dur-16f);
   }
 
@@ -2131,6 +2215,13 @@ h3 {
   }
 }
 
+/* The notice (left) and the dock (right) would meet here, so the dock rides above the notice while it shows. */
+@media (max-width: 900px) {
+  .dock {
+    margin-bottom: var(--share-note-h, 0px);
+  }
+}
+
 @media (max-width: 720px) {
   .nav__section {
     display: none;
@@ -2232,6 +2323,12 @@ h3 {
 
   .dock {
     right: 12px;
+    bottom: 12px;
+    width: calc(100vw - 24px);
+  }
+
+  .share-note {
+    left: 12px;
     bottom: 12px;
     width: calc(100vw - 24px);
   }

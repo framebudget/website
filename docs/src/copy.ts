@@ -1,4 +1,4 @@
-import { FRAME_MS, SITE_EFFECTS } from "./effects";
+import { DEVICES, FRAME_MS, SITE_EFFECTS } from "./effects";
 
 /**
  * Texts that change while the page runs. Each live text sits in a
@@ -47,5 +47,5 @@ export const RESERVES: Record<string, readonly string[]> = {
   learned: [LEARNED.simulated, LEARNED.none, LEARNED.some(listNames(["Frame chart, full res", "Backdrop blur", "x", "y"]))],
   "warm-note": Object.values(WARM_NOTE),
   "html-attrs": [htmlAttrs("Medium", SITE_EFFECTS.map((e) => e.name).join(" "))],
-  "ladder-device": ["this device", "Budget 2019", "Score 300"],
+  "ladder-device": ["this device", ...DEVICES.map((d) => d.name), "Score 300"],
 };

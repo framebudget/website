@@ -44,7 +44,7 @@
           </div>
           <div class="hero__actions">
             <span class="magnetic"><a class="button button--primary press" href="#simulator" data-cuelume-tap data-cuelume-emphasis="strong">Open the simulator</a></span>
-            <span class="magnetic"><a class="button press" href="/api.html" data-cuelume-navigate>Read the API</a></span>
+            <span class="magnetic"><a class="button press" href="/api" data-cuelume-navigate>Read the API</a></span>
           </div>
         </div>
 
@@ -63,7 +63,7 @@
           <p class="chart__note"><!-- fb:reserve:chart-note Each bar is one frame: the page's own work, then every effect framebudget allowed. The outline is the same frame with every effect on. --></p>
           <div class="chart__picker">
             <p class="chart__picker-label" id="hero-picker-label">Run this page as</p>
-            <!-- fb:picker:hero-picker-label -->
+            <!-- fb:picker:hero-picker-label hero -->
           </div>
         </figure>
 
@@ -184,7 +184,7 @@ budget.on("change", (snapshot) =&gt; {
           <div class="moment__text">
             <p class="moment__when">Only if the site opts in</p>
             <h3>Telemetry is off by default</h3>
-            <p>There is no default endpoint. A site can share anonymous, sampled reports to help calibrate the numbers, with one beacon when the page hides. Nothing is sent under Global Privacy Control or Save-Data, while a tier is forced, or while a device is simulated.</p>
+            <p>There is no default endpoint. A site can share anonymous, sampled reports to help calibrate the numbers, with one beacon when the page hides. Nothing is sent under Global Privacy Control or Save-Data, while a tier is forced, or while a device is simulated. This site opts in for its own visitors: <a href="/privacy">see what it keeps</a>.</p>
           </div>
           <div class="moment__live panel spot privacy">
             <div>
@@ -355,7 +355,7 @@ html[data-framebudget="Lite"] .hero-video {
     <div class="shell">
       <div class="section__head reveal">
         <h2 id="effects-title" data-reveal="words">The effects on this page</h2>
-        <p class="section__lede">Fifteen effects, each registered with a threshold and a cost. A tier is every effect at or below its floor: Lite 20, Medium 35, High 70, Full 120. The column of this device's tier is lit.</p>
+        <p class="section__lede">Fifteen effects, each registered with a threshold and a cost. A tier is every effect at or below its floor: Lite 20, Medium 49, High 90, Full 180. The column of this device's tier is lit.</p>
       </div>
       <div class="registry reveal" role="region" aria-labelledby="effects-title" tabindex="0">
         <!-- fb:registry -->
@@ -383,7 +383,7 @@ html[data-framebudget="Lite"] .hero-video {
         </details>
         <details>
           <summary>Does it send anything anywhere?</summary>
-          <div class="faq__body"><p>Not unless the site developer configures an endpoint. Local learning stays in one localStorage entry. Optional telemetry is anonymous, sampled, sent as one beacon, and never sent under Global Privacy Control or Save-Data.</p></div>
+          <div class="faq__body"><p>Not unless the site developer configures an endpoint. Local learning stays in one localStorage entry. Optional telemetry is anonymous, sampled, sent as one beacon, and never sent under Global Privacy Control or Save-Data. This site does share its own visitors' measurements, to calibrate the numbers: <a href="/privacy">what it sends and how to say no</a>.</p></div>
         </details>
         <details>
           <summary>What happens during server rendering?</summary>
@@ -400,5 +400,6 @@ html[data-framebudget="Lite"] .hero-video {
 
 <!-- fb:footer -->
 <!-- fb:dock -->
+<!-- fb:share-note -->
 </body>
 </html>

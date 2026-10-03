@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<!-- framebudget:boot -->
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Privacy: what framebudget.dev measures</title>
+<meta name="description" content="framebudget.dev shares anonymous frame measurements from each visit to calibrate framebudget on real devices. What is collected, what is not, how long it is kept, and how to say no.">
+<meta name="theme-color" content="#0f1225">
+<meta property="og:type" content="website">
+<meta property="og:title" content="Privacy: what framebudget.dev measures">
+<meta property="og:description" content="Keep the effects. Lose the stutter.">
+<meta property="og:image" content="/og.png">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" href="/logo/favicon.svg" type="image/svg+xml">
+<link rel="icon" href="/logo/favicon-32.png" sizes="32x32" type="image/png">
+<link rel="preload" href="/fonts/archivo-var.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="/fonts/martian-mono-var.woff2" as="font" type="font/woff2" crossorigin>
+<script type="module" src="/src/main.ts"></script>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+
+<!-- fb:nav:privacy -->
+
+<main id="main" class="shell docs">
+  <header class="docs__head">
+    <h1 class="page-title" data-reveal="blur"><span class="w" style="--i:0">Privacy</span></h1>
+    <p class="docs__lede">This site measures how fast your device draws frames and shares the numbers, anonymously, so framebudget's scores and thresholds can be calibrated on real devices instead of one desktop. Nothing here identifies you, and you can say no.</p>
+    <div class="docs__live panel">
+      <p class="panel__label">Your choice in this browser</p>
+      <p class="share-control__state" role="status" data-share-state>This browser shares anonymous measurements, unless Global Privacy Control or Save-Data is on.</p>
+      <p class="share-control__action"><button class="button press" type="button" aria-pressed="false" data-share-toggle data-cuelume-toggle>Don't share</button></p>
+    </div>
+  </header>
+
+  <div class="docs__body">
+    <nav class="toc" aria-label="On this page">
+      <p class="toc__title">On this page</p>
+      <ul>
+        <li><a href="#collected">What is collected</a></li>
+        <li><a href="#not-collected">What is not</a></li>
+        <li><a href="#when">When it is sent</a></li>
+        <li><a href="#retention">Storage and retention</a></li>
+        <li><a href="#local">On your device</a></li>
+        <li><a href="#contact">Contact</a></li>
+      </ul>
+    </nav>
+
+    <div class="docs__content">
+      <section id="collected" aria-labelledby="collected-title">
+        <h2 id="collected-title">What is collected</h2>
+        <p>One report per page view, sent by the browser to <code>/api/report</code> on this site. It holds only these numbers and names:</p>
+        <table class="table">
+          <thead><tr><th scope="col">Field</th><th scope="col">What it is</th></tr></thead>
+          <tbody>
+            <tr><th scope="row">Calibration version</th><td>Which set of reference numbers the scores were computed with.</td></tr>
+            <tr><th scope="row">Scores</th><td>The device score (100 is the reference phone), and the cold and warm benchmark scores, rounded to whole numbers.</td></tr>
+            <tr><th scope="row">Kernel rates</th><td>How much work each of the four benchmark kernels did per millisecond, to 3 significant digits.</td></tr>
+            <tr><th scope="row">Clock resolution</th><td>The precision of the page's timer, in milliseconds.</td></tr>
+            <tr><th scope="row">Hardware hints</th><td>The number of logical cores and the rounded memory size the browser reports, the Compute Pressure state when available, and whether reduced motion is on.</td></tr>
+            <tr><th scope="row">Decision</th><td>The tier, the effects that ran, and the effects framebudget stepped down because frames were late.</td></tr>
+            <tr><th scope="row">Frame rates</th><td>The median frames per second of the page and of each effect that reported frames, whole numbers.</td></tr>
+          </tbody>
+        </table>
+        <p>The server adds a few coarse fields from the request and then discards the request headers:</p>
+        <table class="table">
+          <thead><tr><th scope="col">Field</th><th scope="col">What it is</th></tr></thead>
+          <tbody>
+            <tr><th scope="row">Browser engine</th><td>The engine family (Blink, Gecko or WebKit) and its major version, for example Blink 140.</td></tr>
+            <tr><th scope="row">Operating system</th><td>The family only: Android, iOS, Windows, macOS, Linux, ChromeOS or other.</td></tr>
+            <tr><th scope="row">Form factor</th><td>Mobile or desktop.</td></tr>
+            <tr><th scope="row">Country</th><td>The two-letter country code Cloudflare assigns to the request.</td></tr>
+            <tr><th scope="row">Day</th><td>The date the report arrived, in UTC, without the time of day.</td></tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section id="not-collected" aria-labelledby="not-collected-title">
+        <h2 id="not-collected-title">What is not collected</h2>
+        <ul>
+          <li>No IP address. Your browser sends it with every request, as it does to any site, but it is not stored.</li>
+          <li>No user agent string, only the engine, its major version and the operating system family derived from it.</li>
+          <li>No cookies, no identifiers, no fingerprint, nothing that links one visit to another.</li>
+          <li>No page addresses, referrers or search terms, and no time of day.</li>
+          <li>No analytics or advertising scripts. The report goes to this site only.</li>
+        </ul>
+      </section>
+
+      <section id="when" aria-labelledby="when-title">
+        <h2 id="when-title">When it is sent</h2>
+        <ul>
+          <li>Once per page view, as one <code>navigator.sendBeacon</code> request when the page is hidden or closed, after it has loaded.</li>
+          <li>Never when Global Privacy Control or Save-Data is on. Both are checked again right before sending.</li>
+          <li>Never while a device is simulated or a tier is forced, since those numbers would not describe your device.</li>
+          <li>Never after you choose <strong>Don't share</strong>, here or on the notice at the bottom of the home page. The choice is kept in this browser's <code>localStorage</code>.</li>
+        </ul>
+        <p>The site also fetches <code>/api/calibration</code> at most once a day, without cookies, to use updated reference numbers on your next visit. It follows the same rules.</p>
+      </section>
+
+      <section id="retention" aria-labelledby="retention-title">
+        <h2 id="retention-title">Storage and retention</h2>
+        <p>Reports are stored in a Cloudflare D1 database, behind the Cloudflare Worker that serves this site. A daily job deletes every report older than 400 days. The reports are used only to calibrate framebudget: reference rates, thresholds and the score scale. Only aggregated numbers, such as medians and percentiles, are ever published.</p>
+      </section>
+
+      <section id="local" aria-labelledby="local-title">
+        <h2 id="local-title">On your device</h2>
+        <p>framebudget keeps one <code>localStorage</code> entry per site with the cached score and the effects that stuttered, so the next visit starts with the right effects. The site also remembers your sound and sharing choices. None of this leaves your device.</p>
+      </section>
+
+      <section id="contact" aria-labelledby="contact-title">
+        <h2 id="contact-title">Contact</h2>
+        <p>Questions, or a request about this data: <a href="mailto:privacy@framebudget.dev">privacy@framebudget.dev</a>. Since reports carry no identifiers, there is no way to find the reports of one visitor, so none can be shown or deleted individually.</p>
+      </section>
+    </div>
+  </div>
+</main>
+
+<!-- fb:footer -->
+<!-- fb:dock -->
+<!-- fb:share-note -->
+</body>
+</html>

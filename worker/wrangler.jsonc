@@ -1,0 +1,38 @@
+{
+  "$schema": "../node_modules/wrangler/config-schema.json",
+  "name": "framebudget",
+  "main": "src/index.ts",
+  // Not newer than the workerd bundled with the installed wrangler (1.20261001.1).
+  "compatibility_date": "2026-10-01",
+  "account_id": "c4c6b9a48d0af8cbf5b00546b388b78c",
+  "routes": [
+    { "pattern": "framebudget.dev", "custom_domain": true },
+    { "pattern": "www.framebudget.dev", "custom_domain": true }
+  ],
+  "assets": {
+    // Vite output of the landing site. Build it first: npm run build (root) then npm run build -w framebudget-site.
+    "directory": "../site/dist",
+    "binding": "ASSETS",
+    // Static files are served by the asset layer without invoking the Worker (free, not
+    // counted against Worker requests). /api/* runs the Worker first; paths with no matching
+    // asset fall through to it too.
+    "run_worker_first": ["/api/*"],
+    // / serves index.html, /api and /privacy serve api.html and privacy.html (the site links
+    // them without the extension), all from the asset layer without invoking the Worker.
+    "html_handling": "auto-trailing-slash",
+    "not_found_handling": "none"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "framebudget",
+      // created with `npx wrangler d1 create framebudget` in the owner's account
+      "database_id": "bf26d7c7-9344-47cd-87d8-68584efde78a",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "triggers": {
+    // Daily retention job: deletes reports older than 400 days.
+    "crons": ["17 3 * * *"]
+  }
+}
