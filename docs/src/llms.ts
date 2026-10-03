@@ -15,7 +15,7 @@ const FULL_HEADER = `# framebudget
 
 > framebudget is a TypeScript library for the browser that decides, per device, which visual effects a site can afford. Keep the effects. Lose the stutter.
 
-This is the full documentation in one Markdown file. Website and API reference: https://framebudget.dev/api. Source code (MIT license): https://github.com/alysnnix/framebudget.
+This is the full documentation in one Markdown file. Website and API reference: https://framebudget.dev/api. Source code (MIT license): https://github.com/framebudget/framebudget.
 `;
 
 /** The README from its first prose paragraph up to, not including, "## Development". */

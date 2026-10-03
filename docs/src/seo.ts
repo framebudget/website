@@ -7,7 +7,7 @@
  */
 
 const ORIGIN = "https://framebudget.dev";
-const REPOSITORY = "https://github.com/alysnnix/framebudget";
+const REPOSITORY = "https://github.com/framebudget/framebudget";
 const OG_IMAGE_ALT =
   "framebudget: keep the effects, lose the stutter. A 16.7 ms frame budget bar split between your app, a transition, parallax and a canvas.";
 

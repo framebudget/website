@@ -12,7 +12,7 @@
 
 - [API reference](https://framebudget.dev/api): every export, the boot script, effects and tiers, simulating a device, the governor, calibration, telemetry, the React hooks and the diagnostics panel.
 - [Full documentation in Markdown](https://framebudget.dev/llms-full.txt): install, boot script, usage, API, effects, tiers, benchmark, governor, learning, calibration, React, telemetry and privacy, in one file.
-- [README on GitHub](https://github.com/alysnnix/framebudget#readme): the same documentation, next to the source.
+- [README on GitHub](https://github.com/framebudget/framebudget#readme): the same documentation, next to the source.
 
 ## Examples
 
@@ -20,5 +20,5 @@
 
 ## Optional
 
-- [Source code](https://github.com/alysnnix/framebudget): TypeScript, MIT license.
+- [Source code](https://github.com/framebudget/framebudget): TypeScript, MIT license.
 - [Privacy on framebudget.dev](https://framebudget.dev/privacy): what the site's own telemetry collects and how to opt out.
