@@ -1,21 +1,23 @@
 /**
- * Text files for AI agents that are derived from committed sources, so they
- * cannot drift: llms-full.txt is the root README.md without its Development
- * section, and llm.txt is a copy of public/llms.txt for agents that ask for
- * that name. Emitted at build time and served by the dev server.
+ * Text files for AI agents that are derived from published sources, so they
+ * cannot drift: llms-full.txt is the README of the installed framebudget
+ * package without its Development section, and llm.txt is a copy of
+ * public/llms.txt for agents that ask for that name. Emitted at build time and
+ * served by the dev server.
  */
 import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { createRequire } from "node:module";
+import { dirname, resolve } from "node:path";
 import type { Plugin } from "vite";
 
-const README = resolve(import.meta.dirname, "../../README.md");
+const README = resolve(dirname(createRequire(import.meta.url).resolve("framebudget/package.json")), "README.md");
 const LLMS = resolve(import.meta.dirname, "../public/llms.txt");
 
 const FULL_HEADER = `# framebudget
 
 > framebudget is a TypeScript library for the browser that decides, per device, which visual effects a site can afford. Keep the effects. Lose the stutter.
 
-This is the full documentation in one Markdown file. Website and API reference: https://framebudget.dev/api. Source code (MIT license): https://github.com/framebudget/framebudget.
+This is the full documentation in one Markdown file. Website and API reference: https://framebudget.dev/api. Source code (MIT license): https://github.com/framebudget/core.
 `;
 
 /** The README from its first prose paragraph up to, not including, "## Development". */

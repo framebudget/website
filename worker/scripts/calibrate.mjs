@@ -5,11 +5,14 @@
  *   npx wrangler d1 execute framebudget --remote --json --command "SELECT * FROM reports" > export.json
  *   node worker/scripts/calibrate.mjs export.json [--percentile 50] [--target-fps 55] [--max-under 0.05]
  *
- * Plain Node, no dependencies. Accepts the wrangler JSON export (an array of
+ * Plain Node; the only import outside Node is `defaultCalibration` from the
+ * installed `framebudget` package (`npm ci --prefix worker`), for the current
+ * reference rates. Accepts the wrangler JSON export (an array of
  * `{ results: [...] }`), a plain JSON array of rows, or a CSV export with a header row.
  */
 import { readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
+import { defaultCalibration } from "framebudget";
 
 export const KERNELS = ["float", "typed", "alloc", "path"];
 
@@ -23,7 +26,7 @@ Options:
   --cal <version>      Calibration version whose scores are the current scale.
                        Default: the most common version in the export.
   --reference <list>   Current reference rates, e.g. float=10800,typed=219000,alloc=30900,path=4860.
-                       Default: the library defaults in src/core/calibration/default-calibration.ts,
+                       Default: defaultCalibration.reference of the installed framebudget package,
                        overridden by worker/calibration.json.`;
 
 /** Parses RFC 4180 CSV (quoted fields, doubled quotes, newlines inside quotes). */
@@ -188,20 +191,11 @@ export function analyze(rawRows, options) {
 }
 
 /** Library default reference rates, overridden by the worker's calibration patch when it has any. */
-function defaultReference(root) {
+function defaultReference(patchUrl) {
   const reference = {};
+  for (const k of KERNELS) if (defaultCalibration.reference[k] > 0) reference[k] = defaultCalibration.reference[k];
   try {
-    const source = readFileSync(new URL("src/core/calibration/default-calibration.ts", root), "utf8");
-    const block = /\breference:\s*\{([^}]*)\}/.exec(source)?.[1] ?? "";
-    for (const k of KERNELS) {
-      const m = new RegExp(`\\b${k}:\\s*([\\d._e]+)`).exec(block);
-      if (m) reference[k] = Number(m[1].replaceAll("_", ""));
-    }
-  } catch {
-    // Not in a checkout of the repository; --reference is then required.
-  }
-  try {
-    const patch = JSON.parse(readFileSync(new URL("worker/calibration.json", root), "utf8"));
+    const patch = JSON.parse(readFileSync(patchUrl, "utf8"));
     for (const k of KERNELS) if (patch?.reference?.[k] > 0) reference[k] = patch.reference[k];
   } catch {
     // No patch.
@@ -294,7 +288,7 @@ function main() {
     return;
   }
   const { file, options } = parsed;
-  options.reference ??= defaultReference(new URL("../../", import.meta.url));
+  options.reference ??= defaultReference(new URL("../calibration.json", import.meta.url));
   const missing = KERNELS.filter((k) => !(options.reference[k] > 0));
   if (missing.length) {
     console.error(`No current reference rate for ${missing.join(", ")}; pass --reference.`);
