@@ -86,9 +86,9 @@
       <div class="docs__content">
         <section id="results" aria-labelledby="results-title" hidden data-lab-results>
           <h2 id="results-title">Your results</h2>
-          <p>Frame times on this device, at a refresh rate of <strong data-lab-refresh>60 Hz</strong>. A late frame took longer than one and a half refresh intervals. Each effect ran alone, on the same page, with the same scroll.</p>
+          <p>Frame times on this device, at a refresh rate of <strong data-lab-refresh>60 Hz</strong>. A late frame took longer than one and a half refresh intervals. Work per frame is the average main-thread time of a frame: the page's JavaScript plus style, layout and paint. While the device keeps up, frame times stay at the refresh interval and only the work moves. Compositor and GPU work, such as a backdrop blur, is not in it; it shows up as late frames when it drops them. Each effect ran alone, on the same page, with the same scroll.</p>
           <table class="table lab-results">
-            <thead><tr><th scope="col">Step</th><th scope="col">Median frame</th><th scope="col">95th percentile</th><th scope="col">Late frames</th></tr></thead>
+            <thead><tr><th scope="col">Step</th><th scope="col">Median frame</th><th scope="col">Work per frame</th><th scope="col">95th percentile frame</th><th scope="col">Late frames</th></tr></thead>
             <tbody data-lab-rows></tbody>
           </table>
         </section>
@@ -98,7 +98,8 @@
           <ul class="docs__list">
             <li>Cloudflare Turnstile checks that a browser, not a script, pressed the button. It runs only then.</li>
             <li>The page waits for framebudget's benchmark, then measures the screen's refresh rate for a second.</li>
-            <li>It runs the page with no effects, then with each effect alone, then with all of them, then with none again. Each step lasts about five seconds while the page scrolls by itself, and every frame's duration is measured.</li>
+            <li>It runs the page with no effects, then with each effect alone, then with all of them, then with none again. Each step lasts about five seconds while the page scrolls by itself. For every frame it measures the frame's duration and the main-thread work the frame cost: the page's JavaScript plus style, layout and paint, timed from the start of the frame to a message that runs right after it.</li>
+            <li>Compositor and GPU work, such as a backdrop blur, is not part of the main-thread work. It still shows up as late frames when it makes the device drop them.</li>
             <li>Every effect runs on every device, whatever framebudget would choose for it. Effects that need your pointer, a press or a navigation (hover states, sounds, morphing controls, page transitions, spring presses, magnetic buttons and the cursor spotlight) are not measured.</li>
             <li>Each step is sent as soon as it ends, before the next one starts. If the tab is hidden during a step, that step runs again once; if it is hidden again, the test stops.</li>
             <li>With reduced motion on, the moving effects stay still and the test measures that. It runs, as always, only when you press the button.</li>
@@ -111,14 +112,14 @@
           <table class="table">
             <thead><tr><th scope="col">Field</th><th scope="col">What it is</th></tr></thead>
             <tbody>
-              <tr><th scope="row">Versions</th><td>The framebudget version this site runs and the calibration version its scores use.</td></tr>
+              <tr><th scope="row">Versions</th><td>The framebudget version this site runs, the calibration version its scores use, and the version of this test.</td></tr>
               <tr><th scope="row">Scores</th><td>The device score (100 is the reference phone) and the cold and warm benchmark scores, to one decimal.</td></tr>
               <tr><th scope="row">Kernel rates</th><td>How much work each of the four benchmark kernels did per millisecond, to 3 significant digits.</td></tr>
               <tr><th scope="row">Clock resolution</th><td>The precision of the page's timer, to 2 significant digits.</td></tr>
               <tr><th scope="row">Hardware hints</th><td>The number of logical cores and the rounded memory size the browser reports.</td></tr>
               <tr><th scope="row">Screen</th><td>The measured refresh rate in whole hertz, the pixel ratio to one decimal, and the window width rounded to 100 pixels.</td></tr>
               <tr><th scope="row">Preferences</th><td>Whether reduced motion and Save-Data are on.</td></tr>
-              <tr><th scope="row">Steps</th><td>For each step: its name, the effects that ran, the number of frames, the duration, the median, 95th percentile and longest frame time, and how many frames were late.</td></tr>
+              <tr><th scope="row">Steps</th><td>For each step: its name, the effects that ran, the number of frames, the duration, the median, 95th percentile and longest frame time, and how many frames were late. Also the main-thread work per frame: its mean, median and 95th percentile, to 2 decimals, and the number of frames with a work sample. Compositor and GPU work, such as a backdrop blur, is not in it.</td></tr>
             </tbody>
           </table>
           <p>The server adds the browser engine and its major version, the operating system family, mobile or desktop, the country Cloudflare assigns to the request, and the day in UTC, then discards the request headers.</p>
@@ -130,7 +131,7 @@
             <li>No IP address and no user agent string.</li>
             <li>No cookies, no identifiers, no fingerprint, no time of day.</li>
             <li>The test's id is random. It exists only in this page's memory and in the record, never on your device, and it stops working when the test ends.</li>
-            <li>When the test is done, this browser keeps a note with the calibration version and the day, without any id, so the button does not come back for the same calibration.</li>
+            <li>When the test is done, this browser keeps a note with the calibration version, the version of the test and the day, without any id, so the button does not come back for the same calibration and test.</li>
           </ul>
         </section>
 

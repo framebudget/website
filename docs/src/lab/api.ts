@@ -1,5 +1,8 @@
 import type { DeviceReport } from "./device";
-import type { FrameStats } from "./measure";
+import type { FrameStats, WorkStats } from "./measure";
+
+/** The lab protocol this page speaks: 2 adds the main-thread work per frame to every step. */
+export const PROTOCOL = 2;
 
 /** Why a run stopped, as the page explains it. */
 export type Failure = "turnstile" | "full" | "network" | "server" | "hidden";
@@ -23,10 +26,11 @@ export interface RunRequest {
   turnstile: string;
   lib: string;
   cal: string;
+  protocol: typeof PROTOCOL;
   device: DeviceReport;
 }
 
-export interface StepReport extends FrameStats {
+export interface StepReport extends FrameStats, WorkStats {
   name: string;
   effects: string[];
 }

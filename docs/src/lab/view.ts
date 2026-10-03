@@ -27,9 +27,11 @@ export interface View {
 }
 
 const ms = (value: number): string => `${value.toFixed(1)} ms`;
+/** Work per frame is often well under a millisecond, so it keeps the second decimal the step sends. */
+const work = (value: number | null): string => (value === null ? "No sample" : `${value.toFixed(2)} ms`);
 
 /** The column headings, repeated on each cell so the phone layout can label the numbers (site.css). */
-const COLUMNS = ["Median frame", "95th percentile", "Late frames"] as const;
+const COLUMNS = ["Median frame", "Work per frame", "95th percentile frame", "Late frames"] as const;
 
 function row(cells: readonly string[], head: string): HTMLTableRowElement {
   const tr = document.createElement("tr");
@@ -40,8 +42,8 @@ function row(cells: readonly string[], head: string): HTMLTableRowElement {
   cells.forEach((text, index) => {
     const td = document.createElement("td");
     td.textContent = text;
-    // A row with one cell spans the three result columns.
-    if (cells.length === 1) td.colSpan = 3;
+    // A row with one cell spans the result columns.
+    if (cells.length === 1) td.colSpan = COLUMNS.length;
     else td.dataset.label = COLUMNS[index];
     tr.append(td);
   });
@@ -91,7 +93,9 @@ export function mountView(root: HTMLElement): View {
       state.textContent = THANKS;
       refresh.textContent = `${refreshHz} Hz`;
       rows.replaceChildren(
-        ...reports.map((r) => row([ms(r.medianMs), ms(r.p95Ms), `${r.over} of ${r.frames}`], STEPS.find((s) => s.name === r.name)?.label ?? r.name)),
+        ...reports.map((r) =>
+          row([ms(r.medianMs), work(r.workMeanMs), ms(r.p95Ms), `${r.over} of ${r.frames}`], STEPS.find((s) => s.name === r.name)?.label ?? r.name),
+        ),
         ...Object.entries(NOT_MEASURED).map(([name, why]) => row([`Not measured. ${why}`], BY_NAME[name]?.label ?? name)),
       );
       results.hidden = false;

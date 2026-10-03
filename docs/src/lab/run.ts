@@ -1,6 +1,6 @@
 import { forceEffects } from "../state";
 import { LabError, sendStep, type Run, type StepReport } from "./api";
-import { measureFrames, summarize } from "./measure";
+import { measureFrames, summarize, summarizeWork } from "./measure";
 import type { Stage } from "./stage";
 import { STEPS, type Step } from "./steps";
 
@@ -41,9 +41,10 @@ async function attempt(step: Step, refreshHz: number, stage: Stage): Promise<Ste
     stage.prepare(step.effects);
     await sleep(SETTLE_MS);
     if (hidden) return null;
-    const gaps = await measureFrames(MEASURE_MS, (elapsed) => stage.drive(elapsed, MEASURE_MS));
+    const work: number[] = [];
+    const gaps = await measureFrames(MEASURE_MS, (elapsed) => stage.drive(elapsed, MEASURE_MS), work);
     if (!gaps || hidden) return null;
-    return { name: step.name, effects: [...step.effects], ...summarize(gaps, refreshHz) };
+    return { name: step.name, effects: [...step.effects], ...summarize(gaps, refreshHz), ...summarizeWork(work) };
   } finally {
     document.removeEventListener("visibilitychange", onChange);
     // Nothing animates and nothing is measured while the step is sent.

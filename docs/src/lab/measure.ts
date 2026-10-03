@@ -12,10 +12,25 @@ export interface FrameStats {
   over: number;
 }
 
+/**
+ * Main-thread work per frame of one step (protocol 2): the page's JavaScript
+ * plus style, layout and paint, not the compositor or the GPU. All null when
+ * the step took no sample.
+ */
+export interface WorkStats {
+  workMeanMs: number | null;
+  workMedianMs: number | null;
+  workP95Ms: number | null;
+  /** Frames with a work sample. */
+  workFrames: number | null;
+}
+
 /** The server bounds every millisecond value and the frame count at this. */
 const LIMIT = 10000;
 
 const clamp = (value: number): number => Math.min(LIMIT, Math.max(0, value));
+
+const round2 = (value: number): number => Math.round(value * 100) / 100;
 
 /** Value at quantile `q` of an ascending list, nearest rank. */
 function quantile(sorted: readonly number[], q: number): number {
@@ -36,12 +51,34 @@ export function summarize(gaps: readonly number[], refreshHz: number): FrameStat
 }
 
 /**
+ * The mean as well as the median: Safari's clock resolves to 1 ms, so single
+ * samples are quantized, while the mean over hundreds of frames stays usable.
+ */
+export function summarizeWork(work: readonly number[]): WorkStats {
+  if (!work.length) return { workMeanMs: null, workMedianMs: null, workP95Ms: null, workFrames: null };
+  const sorted = work.slice().sort((a, b) => a - b);
+  return {
+    workMeanMs: clamp(round2(work.reduce((sum, ms) => sum + ms, 0) / work.length)),
+    workMedianMs: clamp(round2(quantile(sorted, 0.5))),
+    workP95Ms: clamp(round2(quantile(sorted, 0.95))),
+    workFrames: clamp(work.length),
+  };
+}
+
+/**
  * Records the real gap between frames for `durationMs`, from the page's own
  * requestAnimationFrame loop, calling `drive` once per frame before the
  * frame's work so the lab can scroll and feed the effects. Resolves with the
  * gaps, or null as soon as the tab is hidden (a hidden tab draws no frames).
+ * With a `work` array, it also collects each measured frame's main-thread
+ * work into it (loop.ts `setProbe`), at most one sample per frame and none
+ * once the measurement ended.
  */
-export function measureFrames(durationMs: number, drive: (elapsedMs: number) => void = () => {}): Promise<number[] | null> {
+export function measureFrames(
+  durationMs: number,
+  drive: (elapsedMs: number) => void = () => {},
+  work: number[] | null = null,
+): Promise<number[] | null> {
   // An executor, not Promise.withResolvers: the site still runs on browsers from before ES2024.
   return new Promise((resolve) => {
     if (document.hidden) {
@@ -60,12 +97,15 @@ export function measureFrames(durationMs: number, drive: (elapsedMs: number) => 
     };
     document.addEventListener("visibilitychange", onVisibility);
     drive(0);
-    setProbe((gap) => {
-      gaps.push(gap);
-      elapsed += gap;
-      if (elapsed >= durationMs) finish(gaps);
-      else drive(elapsed);
-    });
+    setProbe(
+      (gap) => {
+        gaps.push(gap);
+        elapsed += gap;
+        if (elapsed >= durationMs) finish(gaps);
+        else drive(elapsed);
+      },
+      work && ((ms) => work.push(ms)),
+    );
   });
 }
 

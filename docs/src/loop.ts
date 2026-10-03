@@ -19,6 +19,39 @@ let lastStart = 0;
 let mainReports = true;
 /** The lab's frame probe: the real gap before every frame's work, unclamped. */
 let probe: ((gapMs: number) => void) | null = null;
+/** The lab's work probe: the main-thread time of each measured frame. */
+let work: ((workMs: number) => void) | null = null;
+/**
+ * A message posted at the start of a tick runs as a task after the browser
+ * finished that frame's style, layout and paint, so its arrival time closes
+ * the frame's main-thread work. Created on first use, once.
+ */
+let workChannel: MessageChannel | null = null;
+/** The tick that posted the pending message: its start, and the probe it belongs to. */
+let workStart = 0;
+let workOwner: ((workMs: number) => void) | null = null;
+let workPending = false;
+
+function onWorkMessage(): void {
+  const ms = performance.now() - workStart;
+  workPending = false;
+  // A sample taken for a probe that was removed or replaced since is dropped.
+  if (work && workOwner === work) work(ms);
+  workOwner = null;
+}
+
+function postWork(start: number, owner: (workMs: number) => void): void {
+  // One sample per frame: a tick whose previous message has not arrived yet posts none.
+  if (workPending) return;
+  if (!workChannel) {
+    workChannel = new MessageChannel();
+    workChannel.port1.onmessage = onWorkMessage;
+  }
+  workPending = true;
+  workStart = start;
+  workOwner = owner;
+  workChannel.port2.postMessage(null);
+}
 
 function tick(now: number): void {
   raf = 0;
@@ -31,7 +64,11 @@ function tick(now: number): void {
   // framebudget's own frame sampler is off (setup.ts): this loop is the only
   // requestAnimationFrame on the page, so it feeds the governor itself.
   if (gap && mainReports) reportFrame(gap, "main");
-  if (gap && probe) probe(gap);
+  if (gap && probe) {
+    probe(gap);
+    // The probe may end the measurement on this frame; then the frame is not sampled.
+    if (work) postWork(start, work);
+  }
   last = now;
   lastStart = start;
   try {
@@ -70,9 +107,15 @@ export function setMainReports(on: boolean): void {
  * The lab only: calls `fn` once per frame with the real time since the
  * previous frame, before any job or task runs, and keeps the loop running
  * until it is removed with null. The first frame after a start has no gap.
+ * With `onWork`, every frame that `fn` saw (except the one where it removed
+ * the probe) also reports its main-thread work, measured from the start of
+ * the tick: the page's JavaScript plus style, layout and paint, without the
+ * compositor's and the GPU's share. Samples arrive after the frame; a frame
+ * whose predecessor's sample is still pending is not sampled.
  */
-export function setProbe(fn: ((gapMs: number) => void) | null): void {
+export function setProbe(fn: ((gapMs: number) => void) | null, onWork: ((workMs: number) => void) | null = null): void {
   probe = fn;
+  work = fn ? onWork : null;
   kick();
 }
 
