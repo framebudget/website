@@ -1,4 +1,4 @@
-import { budget } from "framebudget";
+import { allows } from "./force";
 import { reducedMotion, schedule, setTask, watchVisibility } from "./loop";
 import { canAnimate, loadMotion, motionNow, SNAP, SOFT } from "./motion";
 import { cue } from "./sound";
@@ -157,8 +157,11 @@ function mountPress(): void {
 
 /* entrances: groups arrive in a short stagger as they scroll in ------------------- */
 
-function mountEntrances(): void {
-  const items = all(".reveal");
+/**
+ * Watches these elements and lets each group arrive as it scrolls in. The
+ * page calls it once for its sections; the lab calls it for each fresh set.
+ */
+export function observeEntrances(items: readonly HTMLElement[]): void {
   const show = (batch: HTMLElement[]): void => {
     const motion = canAnimate("entrances");
     for (const el of batch) el.classList.add("is-in");
@@ -182,7 +185,7 @@ function mountEntrances(): void {
       }
       if (!batch.length) return;
       // Wait for motion when it is on its way, so the first sections get their stagger too.
-      if (!motionNow() && budget.allows("entrances") && !reducedMotion()) void loadMotion().then(() => show(batch), () => show(batch));
+      if (!motionNow() && allows("entrances") && !reducedMotion()) void loadMotion().then(() => show(batch), () => show(batch));
       else show(batch);
     },
     { rootMargin: "0px 0px -10% 0px" },
@@ -193,6 +196,10 @@ function mountEntrances(): void {
     if (el.getBoundingClientRect().top < fold) el.classList.add("is-in");
     else observer.observe(el);
   }
+}
+
+function mountEntrances(): void {
+  observeEntrances(all(".reveal"));
 }
 
 /* textReveal: headings arrive by blur, by word, by line or by wipe ----------------- */
@@ -244,9 +251,13 @@ function revealHeading(heading: HTMLElement, words: HTMLElement[]): void {
   }
 }
 
-function mountTextReveals(): void {
+/**
+ * Splits these headings into words and reveals each one as it scrolls in.
+ * The page calls it once for its headings; the lab calls it for each fresh set.
+ */
+export function observeTextReveals(headings: readonly HTMLElement[]): void {
   const fold = window.innerHeight;
-  for (const heading of all("[data-reveal]:not(.hero__title):not(.page-title)")) {
+  for (const heading of headings) {
     const words = splitWords(heading);
     if (heading.dataset.reveal === "wipe") {
       const cover = document.createElement("span");
@@ -262,7 +273,7 @@ function mountTextReveals(): void {
       (entries) => {
         if (!entries.some((e) => e.isIntersecting)) return;
         observer.disconnect();
-        if (!motionNow() && budget.allows("textReveal") && !reducedMotion()) {
+        if (!motionNow() && allows("textReveal") && !reducedMotion()) {
           void loadMotion().then(() => revealHeading(heading, words), () => revealHeading(heading, words));
         } else revealHeading(heading, words);
       },
@@ -270,6 +281,10 @@ function mountTextReveals(): void {
     );
     observer.observe(heading);
   }
+}
+
+function mountTextReveals(): void {
+  observeTextReveals(all("[data-reveal]:not(.hero__title):not(.page-title)"));
 }
 
 /* shimmer: CSS animations run only while their element is on screen ---------------- */
