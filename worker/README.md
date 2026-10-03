@@ -143,8 +143,8 @@ The cron trigger (`17 3 * * *`, daily) runs `DELETE FROM reports WHERE created_d
 
 ## Free plan notes
 
-- Workers free plan: 100,000 Worker requests per day. Static asset requests are free and unlimited. The Worker runs only for `/api/*` and for paths with no asset; page views cost one Worker request each, for the report (the calibration fetch is at most once a day per browser).
-- D1 free plan: 5 GB storage, 100,000 rows written and 5 million rows read per day. A row is about 400 bytes, and the site reports every page view (`sampleRate: 1`), so 400 days of retention fit in 5 GB up to about 30,000 page views a day (12 million rows). Past the daily write limit, inserts fail and the Worker answers 503 until the next day; nothing is billed.
+- Workers free plan: 100,000 Worker requests per day. Static asset requests are free and unlimited. The Worker runs only for `/api/*` and for paths with no asset; a browser costs at most one Worker request a week for the report (`minIntervalDays: 7`), plus the calibration fetch at most once a day.
+- D1 free plan: 5 GB storage, 100,000 rows written and 5 million rows read per day. A row is about 400 bytes. Every browser reports (`sampleRate: 1`) but at most once a week (`minIntervalDays: 7`), so rows track weekly unique browsers rather than page views; 400 days of retention fit in 5 GB up to about 30,000 reports a day (12 million rows). Past the daily write limit, inserts fail and the Worker answers 503 until the next day; nothing is billed.
 - No rate limiting binding is configured. The Workers Rate Limiting API page does not state whether the binding is available on the free plan, so it is left out rather than risk a failed deploy. If added later, key it by a constant or by route, never by IP.
 
 ## Deploy

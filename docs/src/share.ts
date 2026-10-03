@@ -8,7 +8,7 @@ import { configure, type ShareOptions } from "framebudget";
 
 const KEY = "framebudget-site-share";
 
-export const SHARE: ShareOptions = { endpoint: "/api/report", sampleRate: 1, calibrationUrl: "/api/calibration" };
+export const SHARE: ShareOptions = { endpoint: "/api/report", sampleRate: 1, minIntervalDays: 7, calibrationUrl: "/api/calibration" };
 
 type Choice = "on" | "off" | null;
 

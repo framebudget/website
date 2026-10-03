@@ -47,7 +47,7 @@ The thresholds sit between the simulator's presets (Flagship 2025 240, Upper mid
 
 ## Sharing measurements
 
-The site enables framebudget's telemetry for its own visitors (`src/share.ts`, `src/setup.ts`): `endpoint: "/api/report"`, `sampleRate: 1`, `calibrationUrl: "/api/calibration"`, served by the Worker in `worker/`. A notice at the bottom of the first visit says what is measured and links to `privacy.html`; **Don't share** stores `framebudget-site-share=off` in `localStorage` and calls `configure({ share: null })`, so nothing is sent from that moment on. The privacy page has the same control. GPC and Save-Data are honored by the library.
+The site enables framebudget's telemetry for its own visitors (`src/share.ts`, `src/setup.ts`): `endpoint: "/api/report"`, `sampleRate: 1`, `minIntervalDays: 7`, `calibrationUrl: "/api/calibration"`, served by the Worker in `worker/`. A notice at the bottom of the first visit says what is measured and links to `privacy.html`; **Don't share** stores `framebudget-site-share=off` in `localStorage` and calls `configure({ share: null })`, so nothing is sent from that moment on. The privacy page has the same control. GPC and Save-Data are honored by the library.
 
 ## Sound
 

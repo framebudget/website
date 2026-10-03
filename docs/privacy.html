@@ -5,7 +5,7 @@
 <!-- framebudget:boot -->
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Privacy: what framebudget.dev measures</title>
-<meta name="description" content="framebudget.dev shares anonymous frame measurements from each visit to calibrate framebudget on real devices. What is collected, what is not, how long it is kept, and how to say no.">
+<meta name="description" content="framebudget.dev shares anonymous frame measurements, at most once a week per browser, to calibrate framebudget on real devices. What is collected, what is not, how long it is kept, and how to say no.">
 <meta name="theme-color" content="#0f1225">
 <meta property="og:type" content="website">
 <meta property="og:title" content="Privacy: what framebudget.dev measures">
@@ -50,7 +50,7 @@
     <div class="docs__content">
       <section id="collected" aria-labelledby="collected-title">
         <h2 id="collected-title">What is collected</h2>
-        <p>One report per page view, sent by the browser to <code>/api/report</code> on this site. It holds only these numbers and names:</p>
+        <p>At most one report per browser each week, sent to <code>/api/report</code> on this site. It holds only these numbers and names:</p>
         <table class="table">
           <thead><tr><th scope="col">Field</th><th scope="col">What it is</th></tr></thead>
           <tbody>
@@ -90,7 +90,7 @@
       <section id="when" aria-labelledby="when-title">
         <h2 id="when-title">When it is sent</h2>
         <ul>
-          <li>Once per page view, as one <code>navigator.sendBeacon</code> request when the page is hidden or closed, after it has loaded.</li>
+          <li>At most once every 7 days per browser (sooner only when the calibration changes), as one <code>navigator.sendBeacon</code> request when the page is hidden or closed, after it has loaded. The date of the last report stays in your browser's local storage, next to the effects framebudget learned to skip.</li>
           <li>Never when Global Privacy Control or Save-Data is on. Both are checked again right before sending.</li>
           <li>Never while a device is simulated or a tier is forced, since those numbers would not describe your device.</li>
           <li>Never after you choose <strong>Don't share</strong>, here or on the notice at the bottom of the home page. The choice is kept in this browser's <code>localStorage</code>.</li>

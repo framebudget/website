@@ -207,6 +207,7 @@ worker.addEventListener("message", (e) =&gt; {
   share: {
     endpoint: "https://example.com/framebudget",
     sampleRate: 0.1, // share of page views that report
+    minIntervalDays: 7, // days a browser waits before reporting again
     calibrationUrl: "https://example.com/framebudget/calibration.json",
   },
 });</code></pre>
@@ -214,6 +215,7 @@ worker.addEventListener("message", (e) =&gt; {
           <li><strong>Sent:</strong> calibration version, rounded scores, kernel rates, clock resolution, cores, memory, pressure, the reduced-motion preference, the tier, allowed and stepped-down effects, median fps per source.</li>
           <li><strong>Never sent:</strong> identifiers, cookies, the URL, the user agent, timestamps.</li>
           <li><strong>When:</strong> one <code>navigator.sendBeacon</code> call when the page is hidden, after load, for sampled page views only.</li>
+          <li><strong>How often:</strong> at most one report per browser every <code>minIntervalDays</code> days (default 7, 0 turns it off), sooner only for a new calibration version. The date of the last report stays in the same <code>localStorage</code> entry.</li>
           <li><strong>Never</strong> under Global Privacy Control or Save-Data, while a tier is forced, or while a device is simulated.</li>
           <li>The beacon still carries what every request carries, such as the IP address and the <code>Origin</code> header.</li>
         </ul>
