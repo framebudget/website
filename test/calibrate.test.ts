@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { analyze, analyzeLab, effectThreshold, labTargetMs, percentile, readRows, scoreOf } from "../scripts/calibrate.mjs";
+import { analyze, analyzeLab, analyzeLabWork, effectThreshold, labTargetMs, parseEffectMs, percentile, readRows, scoreOf } from "../scripts/calibrate.mjs";
 
 const fixture = (name: string) => readFileSync(new URL("fixtures/" + name, import.meta.url), "utf8");
 const REFERENCE = { float: 10800, typed: 219000, alloc: 30900, path: 4860 };
@@ -100,6 +100,60 @@ describe("calibrate", () => {
       const options = { ...OPTIONS, minSamples: 1 };
       expect(analyzeLab([run(40, 120), run(50, 60)], options).effects[0]).toMatchObject({ threshold: 50, above: 1 });
       expect(analyzeLab([run(40, 60), run(50, 60)], options).effects[0]).toMatchObject({ threshold: 40, above: 2 });
+    });
+  });
+
+  describe("--lab, main-thread work (protocol 2)", () => {
+    const rows = () => readRows(fixture("lab-work-export.json"));
+    const CURRENT = { blur: 1.5, canvasLowRes: 0.6, entrances: 0.4 };
+    const work = (options = OPTIONS) => analyzeLabWork(rows(), options, CURRENT);
+    const effect = (name: string, options = OPTIONS) => work(options).effects.find((e) => e.name === name)!;
+
+    it("uses only protocol 2 runs of the main calibration version with a baseline work sample", () => {
+      // 17 rows: 3 protocol 1, one protocol 2 without baseline work, one without a baseline step, one on another version.
+      expect(work()).toMatchObject({ protocolCounts: { 1: 3, 2: 14 }, cal: "provisional-1", runs: 11 });
+      expect(work().effects.map((e) => e.name)).toEqual(["all", "blur", "canvasLowRes", "entrances"]);
+      // The drop-based analysis still counts every run with a baseline, protocol 1 included.
+      expect(analyzeLab(rows(), OPTIONS).runs).toBe(15);
+    });
+
+    it("summarizes the cost on the score 100 device next to the current ms, and proposes the median", () => {
+      const canvas = effect("canvasLowRes");
+      expect(canvas).toMatchObject({ devices: 11, currentMs: 0.6 });
+      expect(canvas.medianMs).toBeCloseTo(0.8, 9);
+      expect(canvas.p90Ms).toBeCloseTo(1.2, 9);
+      expect(canvas.proposedMs).toBe(canvas.medianMs);
+      expect(effect("all")).toMatchObject({ devices: 11, currentMs: null });
+    });
+
+    it("proposes nothing below --min-samples devices, and lowering it proposes", () => {
+      // Five runs measured blur; one had no work sample.
+      expect(effect("blur")).toMatchObject({ devices: 4, currentMs: 1.5, proposedMs: null });
+      expect(effect("blur").medianMs).toBeCloseTo(0.2, 9);
+      expect(effect("blur", { ...OPTIONS, minSamples: 4 }).proposedMs).toBeCloseTo(0.2, 9);
+      expect(effect("canvasLowRes", { ...OPTIONS, minSamples: 12 }).proposedMs).toBeNull();
+    });
+
+    it("scales the cost by score / 100 and floors it at 0", () => {
+      const run = (score: number, baseline: number, blur: number) => ({
+        cal: "c",
+        protocol: 2,
+        score,
+        steps: JSON.stringify([
+          { name: "baseline", medianMs: 16.7, p95Ms: 17, workMeanMs: baseline },
+          { name: "blur", medianMs: 16.7, p95Ms: 17, workMeanMs: blur },
+        ]),
+      });
+      const options = { ...OPTIONS, minSamples: 1 };
+      expect(analyzeLabWork([run(50, 2, 3)], options).effects[0]!.proposedMs).toBeCloseTo(0.5, 9);
+      expect(analyzeLabWork([run(200, 2, 3)], options).effects[0]!.proposedMs).toBeCloseTo(2, 9);
+      expect(analyzeLabWork([run(50, 3, 2)], options).effects[0]!.proposedMs).toBe(0);
+    });
+
+    it("reads the current ms of every effect from docs/src/effects.ts", () => {
+      expect(parseEffectMs('  { name: "hover", label: "Hover states", threshold: 10, cost: 1, ms: 0.2, color: "#b8c0d0" },\n  { name: "blur", label: "x", cost: 6, ms: 1.5 },')).toEqual({ hover: 0.2, blur: 1.5 });
+      const site = parseEffectMs(readFileSync(new URL("../docs/src/effects.ts", import.meta.url), "utf8"));
+      expect(site).toMatchObject({ hover: 0.2, canvasLowRes: 0.6, blur: 1.5, canvasHiRes: 2.6 });
     });
   });
 });

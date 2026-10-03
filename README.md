@@ -131,7 +131,8 @@ Creates one lab run (one row in `lab_runs`). The `/lab` page calls it once, afte
     "tickMs": 0.1, "cores": 8, "memoryGb": 4,
     "refreshHz": 60, "dpr": 2.6, "viewportWidth": 400,
     "reducedMotion": false, "saveData": false
-  }
+  },
+  "protocol": 2
 }
 ```
 
@@ -143,12 +144,14 @@ Checks in order, each failure a bare status with no body:
 | Same origin, as for `/api/report` | 403 |
 | `Content-Type` is `application/json` | 415 |
 | Body at most 4096 bytes | 413 |
-| Body is a valid run (`src/lab-validate.ts`): exact keys at every level, every device key present (`cold`, `warm`, `tickMs`, `cores`, `memoryGb` and each kernel may be `null`), scores 0..10000, kernel rates positive, whole `cores` 1..1024, whole `refreshHz` 1..1000, `dpr` above 0 up to 16, booleans for the flags, `lib` `^[0-9A-Za-z.+-]{1,32}$`, a Turnstile token of 1..2048 characters | 400 |
+| Body is a valid run (`src/lab-validate.ts`): exact keys at every level, every device key present (`cold`, `warm`, `tickMs`, `cores`, `memoryGb` and each kernel may be `null`), scores 0..10000, kernel rates positive, whole `cores` 1..1024, whole `refreshHz` 1..1000, `dpr` above 0 up to 16, booleans for the flags, `lib` `^[0-9A-Za-z.+-]{1,32}$`, a Turnstile token of 1..2048 characters, `protocol` absent, `1` or `2` | 400 |
 | Turnstile: `POST https://challenges.cloudflare.com/turnstile/v0/siteverify` with the form fields `secret` and `response` only (never the IP) answers `success: true`; an unreachable siteverify also fails | 403 |
 | Fewer than `LAB_DAILY_CAP` runs created today (UTC) | 429 |
 | Insert succeeds | 503 |
 
 Success is `201` with `{"run": "<uuid>", "key": "<64 hex characters>", "maxSteps": 20, "expiresIn": 900}` and `Cache-Control: no-store`. The run id is `crypto.randomUUID()`; the key is 32 random bytes in hex, and only its SHA-256 is stored. The page keeps both in memory only. Device numbers are stored at the precision the page promises, whatever it sent: scores and `dpr` to 1 decimal, kernel rates to 3 significant digits, `tickMs` to 2, `viewportWidth` to the nearest 100. The daily cap and the insert are one statement (`INSERT ... SELECT ... WHERE (SELECT COUNT(*) FROM lab_runs WHERE created_day = ?) < ?`), so concurrent requests cannot pass the cap.
+
+`protocol` is the lab protocol of the page and is stored in the `protocol` column. Protocol 1 pages (built before protocol 2 existed) send no `protocol` and get `1`: their runs keep working unchanged. Protocol 2 pages send `2` and add the main-thread work per frame to every step (see below).
 
 #### `POST /api/lab/runs/<run>/steps`
 
@@ -157,10 +160,15 @@ Appends one measured step to the run's row. The page sends each step between mea
 ```json
 {
   "key": "<key from the create response>",
-  "step": { "name": "baseline", "effects": [], "frames": 300, "durationMs": 5004, "medianMs": 16.7, "p95Ms": 18.1, "maxMs": 33.4, "over": 2 },
+  "step": {
+    "name": "baseline", "effects": [], "frames": 300, "durationMs": 5004, "medianMs": 16.7, "p95Ms": 18.1, "maxMs": 33.4, "over": 2,
+    "workMeanMs": 2.35, "workMedianMs": 2, "workP95Ms": 4.1, "workFrames": 298
+  },
   "done": false
 }
 ```
+
+The four work fields come from protocol 2 pages: the main-thread work of each frame (the page's JavaScript plus style, layout and paint; not compositor or GPU work), as its mean, median and p95 over the step, and `workFrames`, the frames that had a work sample. They are `null` when no frame had one. Protocol 1 pages send the step without them.
 
 | Check | Failure |
 | --- | --- |
@@ -169,12 +177,12 @@ Appends one measured step to the run's row. The page sends each step between mea
 | Same origin | 403 |
 | `Content-Type` is `application/json` | 415 |
 | Body at most 2048 bytes | 413 |
-| Body is valid: `key` 64 lowercase hex characters, `done` boolean, `name` `baseline`, `baseline-end`, `all` or an effect name (`^[A-Za-z][A-Za-z0-9]{0,31}$`), at most 32 distinct effect names, whole `frames` 0..10000, whole `over` 0..`frames`, ms values 0..10000 | 400 |
+| Body is valid: `key` 64 lowercase hex characters, `done` boolean, `name` `baseline`, `baseline-end`, `all` or an effect name (`^[A-Za-z][A-Za-z0-9]{0,31}$`), at most 32 distinct effect names, whole `frames` 0..10000, whole `over` 0..`frames`, ms values 0..10000; the four work fields all present or all absent, each `null` or in range (`workMeanMs`, `workMedianMs`, `workP95Ms` 0..10000, whole `workFrames` 0..`frames`) | 400 |
 | The run exists | 404 |
 | The run is open: not completed, `open_until` not passed, fewer than 20 steps | 409 |
 | `sha256(key)` matches the stored hash | 403 |
 
-Success is `204`. The write is a single `UPDATE lab_runs SET steps = json_insert(steps, '$[#]', json(?)), step_count = step_count + 1 WHERE id = ? AND write_key_hash = ? AND completed = 0 AND step_count < 20 AND open_until >= ?`, so concurrent steps can never exceed 20 or write to a closed run; only when it changes no row does the Worker read the row to choose between 404, 409 and 403. The stored step is rebuilt from the validated fields in a fixed key order. `done: true` also sets `completed = 1`, `write_key_hash = NULL` and `open_until = NULL`: the run is closed and nothing on the row tells the time of day.
+Success is `204`. The write is a single `UPDATE lab_runs SET steps = json_insert(steps, '$[#]', json(?)), step_count = step_count + 1 WHERE id = ? AND write_key_hash = ? AND completed = 0 AND step_count < 20 AND open_until >= ?`, so concurrent steps can never exceed 20 or write to a closed run; only when it changes no row does the Worker read the row to choose between 404, 409 and 403. The stored step is rebuilt from the validated fields in a fixed key order: the protocol 1 keys, then, only when sent, the work keys, with the work ms values rounded to 2 decimals. `done: true` also sets `completed = 1`, `write_key_hash = NULL` and `open_until = NULL`: the run is closed and nothing on the row tells the time of day.
 
 ### Data collected
 
@@ -183,7 +191,7 @@ Each row holds exactly what the library's `TelemetryReport` contains, plus coars
 - From the report: calibration version, final score, cold and warm benchmark scores, per-kernel rates, clock resolution, core count, device memory, Compute Pressure state, reduced-motion preference, tier, effects that ran, effects the governor stepped down, median fps per source.
 - Derived server-side: UTC day (no time of day), engine family and major version, OS family, phone-class flag, two-letter country from `request.cf.country`.
 
-A lab run (`lab_runs`) holds the library version, the calibration version, the device numbers listed under [`POST /api/lab/runs`](#post-apilabruns) (scores, kernel rates, clock resolution, cores, memory, refresh rate, device pixel ratio, viewport width rounded to 100 px, reduced-motion and save-data flags), the same derived fields as a report, and the measured steps (per step: name, effects, frame count, duration, median, p95 and max frame time, frames over 1.5 refresh intervals). Until the run closes it also holds the SHA-256 of the write key and the epoch second the run stops accepting steps; both are cleared when the last step arrives or, for abandoned runs, by the daily cron.
+A lab run (`lab_runs`) holds the library version, the calibration version, the lab protocol, the device numbers listed under [`POST /api/lab/runs`](#post-apilabruns) (scores, kernel rates, clock resolution, cores, memory, refresh rate, device pixel ratio, viewport width rounded to 100 px, reduced-motion and save-data flags), the same derived fields as a report, and the measured steps (per step: name, effects, frame count, duration, median, p95 and max frame time, frames over 1.5 refresh intervals, and for protocol 2 the mean, median and p95 main-thread work per frame and the frames with a work sample). Until the run closes it also holds the SHA-256 of the write key and the epoch second the run stops accepting steps; both are cleared when the last step arrives or, for abandoned runs, by the daily cron.
 
 Not collected, not stored, not logged, for reports and lab runs alike: IP address, User-Agent string, client hint values, cookies, any identifier, the page URL, referrer, time of day, city or region. The raw headers are read once to derive the coarse fields (`src/client.ts`) and then discarded. Turnstile's siteverify gets the token and the secret, not the IP. Nothing is logged by the Worker.
 
@@ -217,7 +225,7 @@ Not collected, not stored, not logged, for reports and lab runs alike: IP addres
 
 Indexes: `score`, `(engine, engine_version)`, `(os, mobile)`, `created_day`. `mobile` alone has two values and gets no index of its own; it is the second column of the `os` index. iPadOS Safari reports itself as macOS, so iPads usually land in `macos`.
 
-`migrations/0002_lab.sql`, table `lab_runs` (one row per lab run; steps update it, never add rows):
+`migrations/0002_lab.sql` and `migrations/0003_lab_protocol.sql`, table `lab_runs` (one row per lab run; steps update it, never add rows):
 
 | Column | Type | Notes |
 | --- | --- | --- |
@@ -241,8 +249,9 @@ Indexes: `score`, `(engine, engine_version)`, `(os, mobile)`, `created_day`. `mo
 | `completed` | INTEGER | 1 once the page sent `done: true`; 0 for abandoned runs |
 | `write_key_hash` | TEXT NULL | SHA-256 hex of the write key, NULL once closed |
 | `open_until` | INTEGER NULL | Epoch seconds, creation + 900, NULL once closed |
+| `protocol` | INTEGER | Lab protocol of the page: 1 (frame times only) or 2 (also main-thread work per frame); rows from before 0003 read as 1 |
 
-Index: `created_day` (the daily cap counts today's rows; retention deletes by day). A row is at most about 25 KB (20 steps of 32 effect names each); a typical run is about 3 KB.
+Index: `created_day` (the daily cap counts today's rows; retention deletes by day). A row is at most about 27 KB (20 steps of 32 effect names each); a typical run is about 4 KB.
 
 ### Retention
 
@@ -258,7 +267,7 @@ A row from exactly 400 days ago is kept; one day older is deleted.
 
 - Workers free plan: 100,000 Worker requests per day. Static asset requests are free and unlimited. The Worker runs only for `/api/*` (missing pages get `404.html` from the asset layer); a browser costs at most one Worker request a week for the report (`minIntervalDays: 7`), plus the calibration fetch at most once a day.
 - D1 free plan: 5 GB storage, 100,000 rows written and 5 million rows read per day. A row is about 400 bytes. Every browser reports (`sampleRate: 1`) but at most once a week (`minIntervalDays: 7`), so rows track weekly unique browsers rather than page views; 400 days of retention fit in 5 GB up to about 30,000 reports a day (12 million rows). Past the daily write limit, inserts fail and the Worker answers 503 until the next day; nothing is billed.
-- Lab: `LAB_DAILY_CAP` (a var in `wrangler.jsonc`, `"1000"`) bounds new runs per UTC day. A run is at most 21 row writes (the insert and 20 steps), so the lab adds at most about 21,000 row writes a day, and the cap's `COUNT(*)` reads at most one index entry per run already created that day (about 500,000 rows read a day at the cap). A run is about 3 KB (25 KB at most), so 400 days at the cap take about 1.2 GB. Change the cap in `wrangler.jsonc` and deploy; `"0"` closes the lab. Turnstile guards run creation, and the write key guards each run's steps.
+- Lab: `LAB_DAILY_CAP` (a var in `wrangler.jsonc`, `"1000"`) bounds new runs per UTC day. A run is at most 21 row writes (the insert and 20 steps), so the lab adds at most about 21,000 row writes a day, and the cap's `COUNT(*)` reads at most one index entry per run already created that day (about 500,000 rows read a day at the cap). A run is about 4 KB (27 KB at most), so 400 days at the cap take about 1.6 GB. Change the cap in `wrangler.jsonc` and deploy; `"0"` closes the lab. Turnstile guards run creation, and the write key guards each run's steps.
 - No rate limiting binding is configured. The Workers Rate Limiting API page does not state whether the binding is available on the free plan, so it is left out rather than risk a failed deploy. If added later, key it by a constant or by route, never by IP.
 
 ## Calibration workflow
@@ -301,7 +310,13 @@ A row from exactly 400 days ago is kept; one day older is deleted.
 
    Thresholds are on the lab's score scale (`cal`). Try it on the sample: `node scripts/calibrate.mjs --lab test/fixtures/lab-export.json`.
 
-3. Apply the result: edit the effect thresholds in `docs/src/effects.ts` (and the library defaults, `defaultCalibration` in [github.com/framebudget/core](https://github.com/framebudget/core), when they should change for everyone; the site picks them up with the library release that ships them), and/or set `reference` (and `coldReference`) in `calibration.json`. If the reference rates move, scale every threshold and tier floor by the printed factor in the same change, so effects stay on the same devices.
+   Frame times stay locked to the refresh rate while a device has headroom, so on most devices that analysis reads a cost of 0. Protocol 2 runs also measure the main-thread work of each frame, and `--lab` then prints a second table, over the protocol 2 runs of the same calibration version whose `baseline` step has a work sample. Per effect:
+   - the cost, `workMeanMs - baseline workMeanMs` of the same run, floored at 0, converted to the score 100 device the way `docs/src/effects.ts` models an effect (`msAt(ms, score) = ms * 100 / score`, so `ms at 100 = cost * score / 100`);
+   - the devices, the median and p90 of that `ms at 100`, the effect's current `ms` read from `docs/src/effects.ts`, and the median as the proposed `ms` once at least `--min-samples` devices measured the effect; otherwise `not enough devices`.
+
+   The work excludes compositor and GPU work, so an effect like backdrop blur reads lower here than it costs. Try it on the sample: `node scripts/calibrate.mjs --lab test/fixtures/lab-work-export.json --min-samples 4`.
+
+3. Apply the result: edit the effect thresholds and `ms` in `docs/src/effects.ts` (and the library defaults, `defaultCalibration` in [github.com/framebudget/core](https://github.com/framebudget/core), when they should change for everyone; the site picks them up with the library release that ships them), and/or set `reference` (and `coldReference`) in `calibration.json`. If the reference rates move, scale every threshold and tier floor by the printed factor in the same change, so effects stay on the same devices.
 
 4. Open a pull request, then release the website (see [Releases and deploys](#releases-and-deploys)): the release deploys the Worker and the site.
 
