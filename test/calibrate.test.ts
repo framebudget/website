@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { analyze, effectThreshold, percentile, readRows, scoreOf } from "../scripts/calibrate.mjs";
+import { analyze, analyzeLab, effectThreshold, labTargetMs, percentile, readRows, scoreOf } from "../scripts/calibrate.mjs";
 
 const fixture = (name: string) => readFileSync(new URL("fixtures/" + name, import.meta.url), "utf8");
 const REFERENCE = { float: 10800, typed: 219000, alloc: 30900, path: 4860 };
@@ -53,5 +53,53 @@ describe("calibrate", () => {
     expect(effectThreshold(samples, 55, 1 / 7, 1)?.threshold).toBe(50);
     // Too few devices left above the clean threshold.
     expect(effectThreshold(samples, 55, 0.05, 7)).toBeNull();
+  });
+
+  describe("--lab", () => {
+    const lab = () => analyzeLab(readRows(fixture("lab-export.json")), OPTIONS);
+    const effect = (name: string) => lab().effects.find((e) => e.name === name)!;
+
+    it("analyzes the runs of the main calibration version that measured a baseline", () => {
+      expect(lab()).toMatchObject({ rows: 21, completed: 19, cal: "provisional-1", runs: 19 });
+      expect(lab().effects.map((e) => e.name)).toEqual(["all", "blur", "canvasLowRes", "entrances"]);
+    });
+
+    it("reports the cost over the run's own baseline, by score bucket", () => {
+      // Scores 12 and 18: canvasLowRes adds 120 / score ms to the baseline median (rounded to 0.1 ms).
+      expect(effect("canvasLowRes").buckets[0]).toMatchObject({ label: "0-25", devices: 2 });
+      expect(effect("canvasLowRes").buckets[0]!.medianCost).toBeCloseTo((10 + 6.7) / 2, 6);
+      expect(effect("canvasLowRes").buckets[0]!.p95Cost).toBeCloseTo(6.7 + (10 - 6.7) * 0.95, 6);
+      expect(effect("blur").buckets.slice(0, 4).every((b) => b.devices === 0 && b.medianCost === null)).toBe(true);
+      expect(effect("canvasLowRes").buckets.reduce((n, b) => n + b.devices, 0)).toBe(18);
+    });
+
+    it("proposes the lowest score that keeps the p95 frame time within the target", () => {
+      expect(effect("canvasLowRes")).toMatchObject({ devices: 18, threshold: 52, above: 12, under: 0 });
+      expect(effect("entrances")).toMatchObject({ threshold: 12, above: 18 });
+    });
+
+    it("gives no threshold without enough devices at or above one", () => {
+      expect(effect("blur")).toMatchObject({ devices: 5, threshold: null });
+      expect(effect("all")).toMatchObject({ devices: 18, threshold: null });
+      expect(analyzeLab(readRows(fixture("lab-export.json")), { ...OPTIONS, minSamples: 5 }).effects.find((e) => e.name === "blur")).toMatchObject({ threshold: 104 });
+    });
+
+    it("scales the frame time target by the refresh rate", () => {
+      expect(labTargetMs(55, 60)).toBeCloseTo(1000 / 55, 9);
+      expect(labTargetMs(55, 120)).toBeCloseTo(500 / 55, 9);
+      // p95 12 ms is within the target at 60 Hz and over it at 120 Hz.
+      const run = (score: number, hz: number) => ({
+        cal: "c",
+        score,
+        refresh_hz: hz,
+        steps: JSON.stringify([
+          { name: "baseline", medianMs: 8, p95Ms: 9 },
+          { name: "blur", medianMs: 10, p95Ms: 12 },
+        ]),
+      });
+      const options = { ...OPTIONS, minSamples: 1 };
+      expect(analyzeLab([run(40, 120), run(50, 60)], options).effects[0]).toMatchObject({ threshold: 50, above: 1 });
+      expect(analyzeLab([run(40, 60), run(50, 60)], options).effects[0]).toMatchObject({ threshold: 40, above: 2 });
+    });
   });
 });

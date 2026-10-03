@@ -1,9 +1,13 @@
 #!/usr/bin/env node
 /**
- * Proposes framebudget calibration numbers from exported reports.
+ * Proposes framebudget calibration numbers from exported reports, and effect
+ * thresholds from exported lab runs.
  *
  *   npx wrangler d1 execute framebudget --remote --json --command "SELECT * FROM reports" > export.json
  *   node scripts/calibrate.mjs export.json [--percentile 50] [--target-fps 55] [--max-under 0.05]
+ *
+ *   npx wrangler d1 execute framebudget --remote --json --command "SELECT * FROM lab_runs" > lab.json
+ *   node scripts/calibrate.mjs --lab lab.json [--target-fps 55] [--max-under 0.05] [--min-samples 10]
  *
  * Plain Node; the only import outside Node is `defaultCalibration` from the
  * installed `framebudget` package (`npm ci` at the repository root), for the current
@@ -17,10 +21,14 @@ import { defaultCalibration } from "framebudget";
 export const KERNELS = ["float", "typed", "alloc", "path"];
 
 const USAGE = `Usage: node calibrate.mjs <export.json|export.csv> [options]
+       node calibrate.mjs --lab <lab.json> [options]
 
 Options:
+  --lab <file>         Export of the lab_runs table (JSON or CSV): per effect, frame cost over the
+                       baseline by score bucket and a proposed threshold. Can be combined with a reports export.
   --percentile <p>     Device percentile (0-100) that becomes score 100. Default 50.
-  --target-fps <fps>   Frame rate a device must reach with an effect on. Default 55.
+  --target-fps <fps>   Frame rate a device must reach with an effect on. Default 55. With --lab, the
+                       p95 frame time must stay within 1000/fps ms at 60 Hz, scaled by the refresh rate.
   --max-under <f>      Largest tolerated fraction of devices under the target. Default 0.05.
   --min-samples <n>    Fewest devices at or above a threshold to trust it. Default 10.
   --cal <version>      Calibration version whose scores are the current scale.
@@ -121,18 +129,30 @@ export function scoreOf(kernels, reference) {
 }
 
 /**
- * Lowest score T such that, among devices with score >= T that ran the effect,
- * fewer than `maxUnder` reported fps under the target. Needs `minSamples` devices.
+ * Lowest score T such that, among devices with score >= T, fewer than `maxUnder`
+ * missed the target (`missed: true`). Needs `minSamples` devices at or above T.
  */
-export function effectThreshold(samples, targetFps, maxUnder, minSamples) {
+export function lowestThreshold(samples, maxUnder, minSamples) {
   const candidates = [...new Set(samples.map((s) => s.score))].sort((a, b) => a - b);
   for (const t of candidates) {
     const above = samples.filter((s) => s.score >= t);
     if (above.length < minSamples) break;
-    const under = above.filter((s) => s.fps < targetFps).length / above.length;
+    const under = above.filter((s) => s.missed).length / above.length;
     if (under < maxUnder) return { threshold: t, devices: above.length, under };
   }
   return null;
+}
+
+/**
+ * Lowest score T such that, among devices with score >= T that ran the effect,
+ * fewer than `maxUnder` reported fps under the target. Needs `minSamples` devices.
+ */
+export function effectThreshold(samples, targetFps, maxUnder, minSamples) {
+  return lowestThreshold(
+    samples.map((s) => ({ score: s.score, missed: s.fps < targetFps })),
+    maxUnder,
+    minSamples,
+  );
 }
 
 /** The whole analysis, as data. */
@@ -190,6 +210,66 @@ export function analyze(rawRows, options) {
   };
 }
 
+/** Upper edges of the device score buckets in the lab table; the last bucket is open. */
+export const LAB_BUCKETS = [25, 50, 75, 100, 150, 200];
+/** Lab steps that measure no effect: the reference for every other step, and its repeat at the end. */
+const LAB_BASELINES = ["baseline", "baseline-end"];
+
+/** Typed view of one lab_runs row. Steps by name; a repeated name keeps the last one. */
+export function normalizeLab(row) {
+  const steps = new Map();
+  const list = json(row.steps, []);
+  for (const step of Array.isArray(list) ? list : []) {
+    const medianMs = num(step?.medianMs);
+    const p95Ms = num(step?.p95Ms);
+    if (typeof step?.name === "string" && medianMs !== null && p95Ms !== null) steps.set(step.name, { medianMs, p95Ms });
+  }
+  return { cal: String(row.cal ?? ""), score: num(row.score), refreshHz: num(row.refresh_hz), completed: num(row.completed) === 1, steps };
+}
+
+/** p95 frame time a device at `refreshHz` must stay within: 1000 / targetFps ms at 60 Hz, scaled by the refresh rate. */
+export function labTargetMs(targetFps, refreshHz) {
+  return (1000 / targetFps) * (60 / refreshHz);
+}
+
+export function bucketLabel(i) {
+  const lo = i === 0 ? 0 : LAB_BUCKETS[i - 1];
+  return i === LAB_BUCKETS.length ? `${lo}+` : `${lo}-${LAB_BUCKETS[i]}`;
+}
+
+/**
+ * The lab analysis, as data. Per effect (every step but the baselines), over the
+ * runs of one calibration version that measured a baseline:
+ * - cost: the step's median frame time minus the run's baseline median, summarized
+ *   per score bucket by its median and p95 across devices;
+ * - threshold: the lowest score at which fewer than `maxUnder` of the devices at or
+ *   above it had a p95 frame time over labTargetMs, with at least `minSamples` of them.
+ */
+export function analyzeLab(rawRows, options) {
+  const rows = rawRows.map(normalizeLab);
+  const calCounts = {};
+  for (const r of rows) calCounts[r.cal] = (calCounts[r.cal] ?? 0) + 1;
+  const cal = options.cal ?? Object.entries(calCounts).sort((a, b) => b[1] - a[1])[0]?.[0] ?? null;
+  const runs = rows.filter((r) => r.cal === cal && r.score !== null && r.refreshHz > 0 && r.steps.has("baseline"));
+  const names = [...new Set(runs.flatMap((r) => [...r.steps.keys()]))].filter((n) => !LAB_BASELINES.includes(n)).sort();
+  const effects = names.map((name) => {
+    const samples = runs
+      .filter((r) => r.steps.has(name))
+      .map((r) => {
+        const step = r.steps.get(name);
+        return { score: r.score, cost: step.medianMs - r.steps.get("baseline").medianMs, missed: step.p95Ms > labTargetMs(options.targetFps, r.refreshHz) };
+      });
+    const buckets = Array.from({ length: LAB_BUCKETS.length + 1 }, (_, i) => {
+      const inBucket = samples.filter((s) => (i === 0 || s.score >= LAB_BUCKETS[i - 1]) && (i === LAB_BUCKETS.length || s.score < LAB_BUCKETS[i]));
+      const costs = inBucket.map((s) => s.cost);
+      return { label: bucketLabel(i), devices: inBucket.length, medianCost: percentile(costs, 50), p95Cost: percentile(costs, 95) };
+    });
+    const found = lowestThreshold(samples, options.maxUnder, options.minSamples);
+    return { name, devices: samples.length, buckets, threshold: found?.threshold ?? null, above: found?.devices ?? 0, under: found?.under ?? null };
+  });
+  return { rows: rows.length, completed: rows.filter((r) => r.completed).length, calCounts, cal, runs: runs.length, effects };
+}
+
 /** Library default reference rates, overridden by the worker's calibration patch when it has any. */
 function defaultReference(patchUrl) {
   const reference = {};
@@ -206,6 +286,7 @@ function defaultReference(patchUrl) {
 function parseArgs(argv) {
   const options = { percentile: 50, targetFps: 55, maxUnder: 0.05, minSamples: 10, cal: undefined, reference: undefined };
   let file;
+  let lab;
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     const value = () => {
@@ -223,6 +304,7 @@ function parseArgs(argv) {
     else if (arg === "--max-under") options.maxUnder = number(0, 1);
     else if (arg === "--min-samples") options.minSamples = number(1, 1e9);
     else if (arg === "--cal") options.cal = value();
+    else if (arg === "--lab") lab = value();
     else if (arg === "--reference") {
       options.reference = {};
       for (const pair of value().split(",")) {
@@ -234,8 +316,8 @@ function parseArgs(argv) {
     else if (arg.startsWith("--")) throw new Error(`unknown option ${arg}`);
     else file = arg;
   }
-  if (!file) throw new Error("missing export file");
-  return { file, options };
+  if (!file && !lab) throw new Error("missing export file");
+  return { file, lab, options };
 }
 
 const fmt = (v, digits = 0) => (v === null || v === undefined ? "-" : v.toFixed(digits));
@@ -275,6 +357,38 @@ function print(result, options) {
   return out.join("\n");
 }
 
+function printLab(result, options) {
+  const out = [];
+  out.push(`Lab runs: ${result.rows} (${result.completed} completed)`);
+  out.push(`Calibration versions: ${Object.entries(result.calCounts).map(([k, v]) => `${k}=${v}`).join(", ") || "-"}`);
+  out.push(`Runs analyzed (cal ${result.cal}, with a baseline step): ${result.runs}`);
+  out.push("");
+  out.push("Frame cost over baseline in ms (step median frame time minus the run's baseline median),");
+  out.push("median / p95 across devices, devices in parentheses, by device score:");
+  const cell = (b) => (b.devices ? `${fmt(b.medianCost, 1)} / ${fmt(b.p95Cost, 1)} (${b.devices})` : "-");
+  const labels = Array.from({ length: LAB_BUCKETS.length + 1 }, (_, i) => bucketLabel(i));
+  out.push(`  ${"effect".padEnd(22)} ${labels.map((l) => l.padStart(18)).join("")}`);
+  for (const e of result.effects) out.push(`  ${e.name.padEnd(22)} ${e.buckets.map((b) => cell(b).padStart(18)).join("")}`);
+  out.push("");
+  out.push(
+    `Proposed thresholds: lowest score where under ${+(options.maxUnder * 100).toFixed(2)}% of the devices at or above it had a p95 frame time`,
+  );
+  out.push(
+    `over ${labTargetMs(options.targetFps, 60).toFixed(2)} ms at 60 Hz (${options.targetFps} fps, scaled by refresh rate: ${labTargetMs(options.targetFps, 120).toFixed(2)} ms at 120 Hz), with at least ${options.minSamples} devices.`,
+  );
+  out.push("  effect                 devices  threshold  at/above  over");
+  for (const e of result.effects) {
+    const found = e.threshold === null
+      ? `not enough devices (${e.devices} ran it, ${options.minSamples} needed at or above a threshold)`
+      : `${fmt(e.threshold, 1).padStart(9)}  ${String(e.above).padStart(8)}  ${(e.under * 100).toFixed(1).padStart(4)}%`;
+    out.push(`  ${e.name.padEnd(22)} ${String(e.devices).padStart(7)}  ${found}`);
+  }
+  out.push("");
+  out.push("Notes: the score is the lab's framebudget score on the calibration version above. Apply a threshold to");
+  out.push("docs/src/effects.ts on the same scale, or rescale it by the factor the reports analysis prints.");
+  return out.join("\n");
+}
+
 function main() {
   let parsed;
   try {
@@ -287,15 +401,19 @@ function main() {
     console.log(USAGE);
     return;
   }
-  const { file, options } = parsed;
-  options.reference ??= defaultReference(new URL("../calibration.json", import.meta.url));
-  const missing = KERNELS.filter((k) => !(options.reference[k] > 0));
-  if (missing.length) {
-    console.error(`No current reference rate for ${missing.join(", ")}; pass --reference.`);
-    process.exit(2);
+  const { file, lab, options } = parsed;
+  const sections = [];
+  if (file) {
+    options.reference ??= defaultReference(new URL("../calibration.json", import.meta.url));
+    const missing = KERNELS.filter((k) => !(options.reference[k] > 0));
+    if (missing.length) {
+      console.error(`No current reference rate for ${missing.join(", ")}; pass --reference.`);
+      process.exit(2);
+    }
+    sections.push(print(analyze(readRows(readFileSync(file, "utf8")), options), options));
   }
-  const result = analyze(readRows(readFileSync(file, "utf8")), options);
-  console.log(print(result, options));
+  if (lab) sections.push(printLab(analyzeLab(readRows(readFileSync(lab, "utf8")), options), options));
+  console.log(sections.join("\n\n"));
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) main();
