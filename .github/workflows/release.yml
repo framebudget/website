@@ -182,7 +182,9 @@ jobs:
           mkdir -p "$RUNNER_TEMP/site"
           tar --sort=name --owner=0 --group=0 --numeric-owner --mtime="@$(git log -1 --format=%ct)" \
             -C docs -cf - dist | gzip -n > "$RUNNER_TEMP/site/$SITE_TARBALL"
-          tar -tzf "$RUNNER_TEMP/site/$SITE_TARBALL" | grep -qx 'dist/index.html'
+          # List to a file first: grep -q exits at the first match, and under pipefail tar then fails on a closed pipe.
+          tar -tzf "$RUNNER_TEMP/site/$SITE_TARBALL" > "$RUNNER_TEMP/site-files.txt"
+          grep -qx 'dist/index.html' "$RUNNER_TEMP/site-files.txt"
           ls -l "$RUNNER_TEMP/site"
       # Build provenance: a signed statement that this workflow run built this
       # tarball from the tagged commit (public repositories only).
