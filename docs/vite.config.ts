@@ -18,6 +18,7 @@ const PARTIALS: Record<string, () => string> = {
   "nav:home": () => nav("home"),
   "nav:api": () => nav("api"),
   "nav:privacy": () => nav("privacy"),
+  "nav:error": () => nav(),
   "share-note": shareNote,
   footer,
   dock,
@@ -40,7 +41,7 @@ function framebudgetPages(): Plugin {
       handler(html) {
         const page = html
           .replace("<!-- framebudget:boot -->", () => `<script>${boot}</script>\n<script>${PAGE_TRANSITION_GATE}</script>`)
-          .replace(/<!-- fb:seo:(home|api|privacy) -->/, (_all, seoPage: SeoPage) => seoHead(seoPage, html))
+          .replace(/<!-- fb:seo:(home|api|privacy|error) -->/, (_all, seoPage: SeoPage) => seoHead(seoPage, html))
           .replace(/<!-- fb:picker:([\w-]+)( hero)? -->/g, (_all, label: string, hero?: string) => picker(label, !!hero))
           .replace(/<!-- fb:reserve:([\w-]+) (.*?) -->/g, (_all, id: string, initial: string) => reserve(id, initial))
           .replace(/<!-- fb:([\w:-]+) -->/g, (all, key: string) => {
@@ -91,6 +92,9 @@ export default defineConfig({
         index: resolve(import.meta.dirname, "index.html"),
         api: resolve(import.meta.dirname, "api.html"),
         privacy: resolve(import.meta.dirname, "privacy.html"),
+        // Error pages: the asset layer serves 404.html for unmatched paths, the Worker 500.html when it fails.
+        "404": resolve(import.meta.dirname, "404.html"),
+        "500": resolve(import.meta.dirname, "500.html"),
       },
     },
   },

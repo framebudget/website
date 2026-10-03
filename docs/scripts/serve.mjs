@@ -20,28 +20,40 @@ const TYPES = {
 };
 const COMPRESS = new Set([".html", ".js", ".css", ".svg", ".txt", ".xml", ".webmanifest"]);
 
+/** The dist/ file a URL path maps to, or null when there is none. */
+async function resolveFile(url) {
+  let path = normalize(decodeURIComponent(new URL(url, "http://x").pathname));
+  if (path.endsWith("/")) path += "index.html";
+  // Like the Worker's html_handling "auto-trailing-slash": /api serves api.html.
+  else if (!extname(path)) path += ".html";
+  const file = join(root, path);
+  if (!file.startsWith(root)) return null;
+  return (await stat(file).catch(() => null))?.isFile() ? file : null;
+}
+
+async function send(req, res, file, status) {
+  const ext = extname(file);
+  let body = await readFile(file);
+  const headers = {
+    "content-type": TYPES[ext] || "application/octet-stream",
+    // Hashed assets never change; pages and public files revalidate.
+    "cache-control": file.startsWith(join(root, "assets/")) ? "public, max-age=31536000, immutable" : "public, max-age=0, must-revalidate",
+  };
+  if (COMPRESS.has(ext) && /\bgzip\b/.test(req.headers["accept-encoding"] || "")) {
+    body = gzipSync(body);
+    headers["content-encoding"] = "gzip";
+    headers.vary = "accept-encoding";
+  }
+  res.writeHead(status, headers).end(body);
+}
+
 createServer(async (req, res) => {
   try {
-    let path = normalize(decodeURIComponent(new URL(req.url, "http://x").pathname));
-    if (path.endsWith("/")) path += "index.html";
-    // Like the Worker's html_handling "auto-trailing-slash": /api serves api.html.
-    else if (!extname(path)) path += ".html";
-    const file = join(root, path);
-    if (!file.startsWith(root) || !(await stat(file)).isFile()) throw new Error("not found");
-    const ext = extname(file);
-    let body = await readFile(file);
-    const headers = {
-      "content-type": TYPES[ext] || "application/octet-stream",
-      // Hashed assets never change; pages and public files revalidate.
-      "cache-control": path.startsWith("/assets/") ? "public, max-age=31536000, immutable" : "public, max-age=0, must-revalidate",
-    };
-    if (COMPRESS.has(ext) && /\bgzip\b/.test(req.headers["accept-encoding"] || "")) {
-      body = gzipSync(body);
-      headers["content-encoding"] = "gzip";
-      headers.vary = "accept-encoding";
-    }
-    res.writeHead(200, headers).end(body);
+    const file = await resolveFile(req.url).catch(() => null);
+    if (file) return await send(req, res, file, 200);
+    // Like the Worker's not_found_handling "404-page": unmatched paths get 404.html with a 404.
+    await send(req, res, join(root, "404.html"), 404);
   } catch {
-    res.writeHead(404, { "content-type": "text/plain" }).end("Not found");
+    res.writeHead(500, { "content-type": "text/plain" }).end("Server error");
   }
 }).listen(port, "127.0.0.1", () => console.log(`framebudget site on http://127.0.0.1:${port}/`));

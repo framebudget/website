@@ -2,7 +2,8 @@
  * Search, social and AI-agent tags for each page's <head>, rendered at build
  * time by vite.config.ts from <!-- fb:seo:page -->. The title and the
  * description come from the page's own <title> and <meta name="description">,
- * so each page keeps a single source for both.
+ * so each page keeps a single source for both. The error pages (404.html,
+ * 500.html) use <!-- fb:seo:error -->: noindex, no canonical, no social tags.
  */
 
 const ORIGIN = "https://framebudget.dev";
@@ -10,14 +11,22 @@ const REPOSITORY = "https://github.com/alysnnix/framebudget";
 const OG_IMAGE_ALT =
   "framebudget: keep the effects, lose the stutter. A 16.7 ms frame budget bar split between your app, a transition, parallax and a canvas.";
 
-export type SeoPage = "home" | "api" | "privacy";
+/** Pages with a canonical URL, in the sitemap. */
+type IndexedPage = "home" | "api" | "privacy";
+
+export type SeoPage = IndexedPage | "error";
 
 /**
  * The paths the Worker serves (html_handling: auto-trailing-slash): / for
  * index.html, /api for api.html, /privacy for privacy.html. Canonicals, the
  * sitemap and the site's own links all use them.
  */
-const PATHS: Record<SeoPage, string> = { home: "/", api: "/api", privacy: "/privacy" };
+const PATHS: Record<IndexedPage, string> = { home: "/", api: "/api", privacy: "/privacy" };
+
+/** Links every page carries, error pages included. */
+const SITE_LINKS = `<link rel="alternate" type="text/markdown" href="/llms.txt" title="framebudget for AI agents (llms.txt)">
+<link rel="apple-touch-icon" href="/logo/apple-touch-icon.png">
+<link rel="manifest" href="/site.webmanifest">`;
 
 const esc = (s: string): string => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 
@@ -52,7 +61,7 @@ const WEBSITE = {
   inLanguage: "en",
 };
 
-function pageNode(page: SeoPage, url: string, title: string, description: string): Record<string, unknown> {
+function pageNode(page: IndexedPage, url: string, title: string, description: string): Record<string, unknown> {
   const common = { "@id": `${url}#page`, url, name: title, description, inLanguage: "en", isPartOf: { "@id": WEBSITE["@id"] } };
   if (page === "api") {
     return { "@type": "TechArticle", ...common, headline: title, about: { "@id": SOFTWARE["@id"] }, image: `${ORIGIN}/og.png` };
@@ -61,12 +70,14 @@ function pageNode(page: SeoPage, url: string, title: string, description: string
 }
 
 /** JSON-LD, with "<" escaped so the payload can never close its script element. */
-function jsonLd(page: SeoPage, url: string, title: string, description: string): string {
+function jsonLd(page: IndexedPage, url: string, title: string, description: string): string {
   const graph = { "@context": "https://schema.org", "@graph": [WEBSITE, SOFTWARE, pageNode(page, url, title, description)] };
   return `<script type="application/ld+json">${JSON.stringify(graph).replace(/</g, "\\u003c")}</script>`;
 }
 
 export function seoHead(page: SeoPage, html: string): string {
+  // Served at whatever URL failed, so no canonical and nothing to share; links stay followable.
+  if (page === "error") return `<meta name="robots" content="noindex">\n${SITE_LINKS}`;
   const title = pick(html, /<title>([^<]+)<\/title>/, "a <title>");
   const description = pick(html, /<meta name="description" content="([^"]+)">/, `a <meta name="description">`);
   const url = `${ORIGIN}${PATHS[page]}`;
@@ -89,8 +100,6 @@ export function seoHead(page: SeoPage, html: string): string {
 <meta name="twitter:description" content="${d}">
 <meta name="twitter:image" content="${ORIGIN}/og.png">
 <meta name="twitter:image:alt" content="${alt}">
-<link rel="alternate" type="text/markdown" href="/llms.txt" title="framebudget for AI agents (llms.txt)">
-<link rel="apple-touch-icon" href="/logo/apple-touch-icon.png">
-<link rel="manifest" href="/site.webmanifest">
+${SITE_LINKS}
 ${jsonLd(page, url, title, description)}`;
 }

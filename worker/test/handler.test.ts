@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import calibration from "../calibration.json";
-import { handleFetch, MAX_BODY_BYTES, retentionCutoff, runRetention } from "../src/handler";
+import { handleFetch, handleFetchSafely, MAX_BODY_BYTES, retentionCutoff, runRetention } from "../src/handler";
 import worker from "../src/index";
 import { beacon, CHROME_ANDROID_UA, installCache, makeCtx, makeEnv, ORIGIN, validReport } from "./helpers";
 
@@ -182,6 +182,64 @@ describe("routing", () => {
     const { response, assetRequests } = await send(new Request(ORIGIN + "/missing"));
     expect(response.status).toBe(404);
     expect(assetRequests.map((r) => r.url)).toEqual([ORIGIN + "/missing"]);
+  });
+});
+
+describe("uncaught errors", () => {
+  const PAGE = "text/html,application/xhtml+xml,*/*;q=0.8";
+  const ERROR_PAGE = "<!doctype html><title>Something went wrong</title>";
+
+  /** An asset layer whose /500 is the error page and where any other path fails. */
+  const failingAssets = async (request: Request) => {
+    if (new URL(request.url).pathname !== "/500") throw new Error("asset layer down");
+    return new Response(ERROR_PAGE, { headers: { "content-type": "text/html; charset=utf-8", etag: '"abc"', "cache-control": "public, max-age=0, must-revalidate" } });
+  };
+
+  it("answer a page load with the 500 page, never cached", async () => {
+    const { env, assetRequests } = makeEnv(undefined, failingAssets);
+    const response = await handleFetchSafely(new Request(ORIGIN + "/boom", { headers: { accept: PAGE } }), env, makeCtx().ctx, NOW);
+    expect(response.status).toBe(500);
+    expect(await response.text()).toBe(ERROR_PAGE);
+    expect(response.headers.get("content-type")).toBe("text/html; charset=utf-8");
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(response.headers.get("etag")).toBeNull();
+    expect(assetRequests.map((r) => [r.method, r.url])).toEqual([
+      ["GET", ORIGIN + "/boom"],
+      ["GET", ORIGIN + "/500"],
+    ]);
+  });
+
+  it("answer an API call with a bare 500, even when it accepts HTML", async () => {
+    const caches = {
+      default: {
+        match: async () => {
+          throw new Error("cache down");
+        },
+      },
+    };
+    Object.assign(globalThis, { caches });
+    const { env, assetRequests } = makeEnv(undefined, failingAssets);
+    const response = await handleFetchSafely(new Request(ORIGIN + "/api/calibration", { headers: { accept: PAGE } }), env, makeCtx().ctx, NOW);
+    expect(response.status).toBe(500);
+    expect(await response.text()).toBe("");
+    expect(assetRequests).toEqual([]);
+  });
+
+  it("answer a request that does not accept HTML with a bare 500", async () => {
+    const { env, assetRequests } = makeEnv(undefined, failingAssets);
+    const response = await handleFetchSafely(new Request(ORIGIN + "/boom.js", { headers: { accept: "*/*" } }), env, makeCtx().ctx, NOW);
+    expect(response.status).toBe(500);
+    expect(await response.text()).toBe("");
+    expect(assetRequests.map((r) => r.url)).toEqual([ORIGIN + "/boom.js"]);
+  });
+
+  it("answer with a bare 500 when the 500 page cannot be served either", async () => {
+    const { env } = makeEnv(undefined, async () => {
+      throw new Error("asset layer down");
+    });
+    const response = await handleFetchSafely(new Request(ORIGIN + "/boom", { headers: { accept: PAGE } }), env, makeCtx().ctx, NOW);
+    expect(response.status).toBe(500);
+    expect(await response.text()).toBe("");
   });
 });
 

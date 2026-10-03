@@ -11,7 +11,7 @@ Run these in `docs/`. The site uses the library from the repository root through
 | `npm install` | Installs Vite, TypeScript, `motion` and `cuelume`, and links `framebudget` from the repository root. |
 | `npm run dev` | Starts the Vite dev server with hot reload. |
 | `npm run build` | Type-checks, then writes the static site to `dist/`. |
-| `npm run serve` | Serves `dist/` with gzip and long-lived caching for hashed assets, like a production host. Extensionless paths serve the matching page (`/api` serves `api.html`), like the Worker. Optional port: `npm run serve -- 8080`. |
+| `npm run serve` | Serves `dist/` with gzip and long-lived caching for hashed assets, like a production host. Extensionless paths serve the matching page (`/api` serves `api.html`) and missing paths get `404.html` with status 404, like the Worker. Optional port: `npm run serve -- 8080`. |
 | `node scripts/interaction-check.mjs <cdp-url> <url-part> <throttle> <selector>...` | Clicks each selector with real input events through the DevTools protocol of an open browser, under CPU throttling, and reports the interaction time, long tasks, layout shift and any view transition. |
 
 ## How it uses framebudget
@@ -60,6 +60,13 @@ The site enables framebudget's telemetry for its own visitors (`src/share.ts`, `
 - `public/robots.txt` allows everything except `/api/` (the Worker's endpoints; `/api` itself is the API reference page) and points to `public/sitemap.xml`. Add new pages to the sitemap and to `PATHS` in `src/seo.ts`.
 - `public/llms.txt` follows [llmstxt.org](https://llmstxt.org): a short summary and links for AI agents. The plugin in `src/llms.ts` derives two more files at build time (and serves them in `npm run dev`), so nothing is copied by hand: `llm.txt`, the same content for agents that ask for that name, and `llms-full.txt`, the root `README.md` without its Development section under a short header.
 - `public/site.webmanifest` lists `logo/icon-192.png` and `logo/icon-512.png`. Those and `logo/apple-touch-icon.png` (180x180) are `mark.svg` rendered as a full-bleed square on Ink, since iOS rounds the corners itself.
+
+## Error pages
+
+`404.html` and `500.html` are pages of the build like the others: same header, footer, dock, stylesheet and scripts (`nav:error` renders the header with no current link). Their head uses `<!-- fb:seo:error -->`, which renders `<meta name="robots" content="noindex">` and the shared links, without a canonical or social tags, and they stay out of `public/sitemap.xml`. Every URL in them is root-relative, since they are served at whatever path failed.
+
+- `404.html`: the asset layer serves it with status 404 for any path with no matching file (`not_found_handling: "404-page"` in `worker/wrangler.jsonc`), and so does `npm run serve`. A small inline script shows the requested path (`location.pathname`, set with `textContent`).
+- `500.html`: the Worker serves it with status 500 when it fails while answering a page load (see `worker/README.md`). The retry button reloads the page.
 
 ## Assets
 

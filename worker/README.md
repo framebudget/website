@@ -2,12 +2,18 @@
 
 One Cloudflare Worker (free plan) for framebudget.dev:
 
-- Serves the landing site (`docs/dist`, the Vite build) through the static assets layer. Static files are served without running the Worker, so they cost nothing and do not count against Worker requests. `html_handling` is `auto-trailing-slash`: `/` serves `index.html`, `/api` and `/privacy` serve `api.html` and `privacy.html`, which is how the site links them. `/privacy.html` redirects to `/privacy`.
+- Serves the landing site (`docs/dist`, the Vite build) through the static assets layer. Static files are served without running the Worker, so they cost nothing and do not count against Worker requests. `html_handling` is `auto-trailing-slash`: `/` serves `index.html`, `/api` and `/privacy` serve `api.html` and `privacy.html`, which is how the site links them. `/privacy.html` redirects to `/privacy`. `not_found_handling` is `404-page`: a path with no matching file gets `404.html` (`docs/404.html`) with status 404, from the asset layer.
 - `POST /api/report`: receives the anonymous report the library sends with `navigator.sendBeacon` and stores one row in D1.
 - `GET /api/calibration`: returns the calibration patch the library fetches at most once a day.
 - A daily cron deletes reports older than 400 days.
 
 The data exists to calibrate the score scale (reference rates) and the effect thresholds on real devices.
+
+## Routing and errors
+
+`run_worker_first: ["/api/*"]` is the only way into the Worker: every other path, matched or not, is answered by the asset layer, so a missing page never costs a Worker request. `/api` itself is the API reference page; `/api/` and below are the Worker's.
+
+The fetch entry (`handleFetchSafely` in `src/handler.ts`) catches any error the handler throws. A page load (an `Accept` header with `text/html`, outside `/api/`) gets the site's `500.html` with status 500 and `Cache-Control: no-store`, fetched from the assets binding as `/500` (`/500.html` would redirect there); anything else, the API included, gets a bare 500, as the API's other errors do. With today's routing only `/api/*` reaches the Worker, so the page is a safety net for routes added later. The error is not logged, like everything else here.
 
 ## Endpoints
 
@@ -101,7 +107,8 @@ Run the retention job locally with `npx wrangler dev --local --test-scheduled` a
 Tests and types:
 
 ```sh
-npm test --prefix worker              # Vitest; handler tests run against in-memory SQLite with the real migration
+npm test --prefix worker              # Vitest; handler tests run against in-memory SQLite with the real migration,
+                                      # assets.test.ts runs wrangler.jsonc's routing in wrangler's local runtime
 npm run typecheck --prefix worker
 ```
 
@@ -143,7 +150,7 @@ The cron trigger (`17 3 * * *`, daily) runs `DELETE FROM reports WHERE created_d
 
 ## Free plan notes
 
-- Workers free plan: 100,000 Worker requests per day. Static asset requests are free and unlimited. The Worker runs only for `/api/*` and for paths with no asset; a browser costs at most one Worker request a week for the report (`minIntervalDays: 7`), plus the calibration fetch at most once a day.
+- Workers free plan: 100,000 Worker requests per day. Static asset requests are free and unlimited. The Worker runs only for `/api/*` (missing pages get `404.html` from the asset layer); a browser costs at most one Worker request a week for the report (`minIntervalDays: 7`), plus the calibration fetch at most once a day.
 - D1 free plan: 5 GB storage, 100,000 rows written and 5 million rows read per day. A row is about 400 bytes. Every browser reports (`sampleRate: 1`) but at most once a week (`minIntervalDays: 7`), so rows track weekly unique browsers rather than page views; 400 days of retention fit in 5 GB up to about 30,000 reports a day (12 million rows). Past the daily write limit, inserts fail and the Worker answers 503 until the next day; nothing is billed.
 - No rate limiting binding is configured. The Workers Rate Limiting API page does not state whether the binding is available on the free plan, so it is left out rather than risk a failed deploy. If added later, key it by a constant or by route, never by IP.
 

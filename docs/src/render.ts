@@ -15,7 +15,8 @@ const LOCKUP = `<img src="/logo/lockup-dark.svg" alt="framebudget" width="158" h
 
 const SPEAKER = `<svg class="sound-icon" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" focusable="false"><path class="sound-icon__body" d="M4 9.5h3.2L12 5.5v13l-4.8-4H4z"/><path class="sound-icon__wave sound-icon__wave--1" d="M15.2 9.3a3.6 3.6 0 0 1 0 5.4"/><path class="sound-icon__wave sound-icon__wave--2" d="M17.6 6.9a7 7 0 0 1 0 10.2"/><path class="sound-icon__mute" d="M15.5 9.5l5 5m0-5l-5 5"/></svg>`;
 
-export function nav(page: "home" | "api" | "privacy"): string {
+/** The header. `page` marks the current link; error pages pass none. */
+export function nav(page?: "home" | "api" | "privacy"): string {
   const current = (p: string): string => (p === page ? ` aria-current="page"` : "");
   return `<header class="nav">
   <div class="shell nav__inner">

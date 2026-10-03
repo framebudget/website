@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<!-- framebudget:boot -->
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Something went wrong: framebudget.dev</title>
+<meta name="description" content="framebudget.dev hit an error while answering this request. Try again in a moment.">
+<meta name="theme-color" content="#0f1225">
+<!-- fb:seo:error -->
+<link rel="icon" href="/logo/favicon.svg" type="image/svg+xml">
+<link rel="icon" href="/logo/favicon-32.png" sizes="32x32" type="image/png">
+<link rel="preload" href="/fonts/archivo-var.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="/fonts/martian-mono-var.woff2" as="font" type="font/woff2" crossorigin>
+<script type="module" src="/src/main.ts"></script>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+
+<!-- fb:nav:error -->
+
+<main id="main" class="shell error-page">
+  <p class="error-page__status">Error <span class="num">500</span></p>
+  <h1 class="page-title" data-reveal="blur"><span class="w" style="--i:0">Something</span> <span class="w" style="--i:1">went</span> <span class="w" style="--i:2">wrong</span></h1>
+  <p class="error-page__lede">The server hit an error while answering this request. That one is on our side, not yours. Try again in a moment; if it keeps happening, let us know on GitHub.</p>
+  <div class="error-page__actions">
+    <span class="magnetic"><button class="button button--primary press" type="button" data-error-retry data-cuelume-tap>Try again</button></span>
+    <span class="magnetic"><a class="button press" href="/" data-cuelume-navigate>Go to the home page</a></span>
+    <span class="magnetic"><a class="button press" href="https://github.com/alysnnix/framebudget/issues">Report it on GitHub</a></span>
+  </div>
+  <script>document.querySelector("[data-error-retry]").addEventListener("click",function(){location.reload()});</script>
+</main>
+
+<!-- fb:footer -->
+<!-- fb:dock -->
+<!-- fb:share-note -->
+</body>
+</html>

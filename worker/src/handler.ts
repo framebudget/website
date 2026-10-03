@@ -143,8 +143,35 @@ export async function handleFetch(request: Request, env: Env, ctx: ExecutionCont
   if (url.pathname === "/api/report") return handleReport(request, env, url, nowMs);
   if (url.pathname === "/api/calibration") return handleCalibration(request, url, ctx);
   if (url.pathname.startsWith("/api/")) return status(404);
-  // No asset matched; let the asset layer answer (404).
+  // Only reachable when the Worker is called directly: run_worker_first sends it /api/* alone, and the
+  // asset layer answers every other unmatched path with 404.html (not_found_handling: "404-page").
   return env.ASSETS.fetch(request);
+}
+
+/**
+ * The fetch entry: handleFetch with a safety net. An uncaught error answers a
+ * page load with the site's 500 page (docs/500.html) and anything else, the
+ * API included, with a bare 500. The page is fetched as /500, the path
+ * html_handling serves it under; /500.html would redirect there.
+ */
+export async function handleFetchSafely(request: Request, env: Env, ctx: ExecutionContext, nowMs: number): Promise<Response> {
+  try {
+    return await handleFetch(request, env, ctx, nowMs);
+  } catch {
+    // A browser page load gets the page; API calls and subresources get a bare status.
+    const pageLoad = (request.headers.get("accept") ?? "").includes("text/html") && !new URL(request.url).pathname.startsWith("/api/");
+    if (!pageLoad) return status(500);
+    try {
+      const page = await env.ASSETS.fetch(new Request(new URL("/500", request.url)));
+      if (!page.ok) return status(500);
+      const headers = new Headers(page.headers);
+      headers.delete("etag");
+      headers.set("cache-control", "no-store");
+      return new Response(page.body, { status: 500, headers });
+    } catch {
+      return status(500);
+    }
+  }
 }
 
 /** Rows whose created_day is before this day are deleted: anything older than RETENTION_DAYS days. */

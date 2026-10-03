@@ -14,13 +14,15 @@
     "directory": "../docs/dist",
     "binding": "ASSETS",
     // Static files are served by the asset layer without invoking the Worker (free, not
-    // counted against Worker requests). /api/* runs the Worker first; paths with no matching
-    // asset fall through to it too.
+    // counted against Worker requests). Only /api/* runs the Worker; every other path stays
+    // with the asset layer, matched or not.
     "run_worker_first": ["/api/*"],
     // / serves index.html, /api and /privacy serve api.html and privacy.html (the site links
     // them without the extension), all from the asset layer without invoking the Worker.
     "html_handling": "auto-trailing-slash",
-    "not_found_handling": "none"
+    // Paths with no matching asset get 404.html (docs/404.html) with status 404, from the
+    // asset layer, without invoking the Worker.
+    "not_found_handling": "404-page"
   },
   "d1_databases": [
     {

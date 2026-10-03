@@ -30,7 +30,8 @@ export class SqliteD1 {
   }
 }
 
-export function makeEnv(db = new SqliteD1()) {
+/** `assets` answers env.ASSETS.fetch; by default every asset is missing. */
+export function makeEnv(db = new SqliteD1(), assets: (request: Request) => Promise<Response> = async () => new Response("not found", { status: 404 })) {
   const assetRequests: Request[] = [];
   const env = {
     // Only prepare/bind/run are used by the Worker; the SQLite stand-in covers exactly that.
@@ -38,7 +39,7 @@ export function makeEnv(db = new SqliteD1()) {
     ASSETS: {
       fetch: async (request: Request) => {
         assetRequests.push(request);
-        return new Response("not found", { status: 404 });
+        return assets(request);
       },
     } as unknown as Fetcher,
   } satisfies Env;
