@@ -23,14 +23,28 @@ export interface LabDevice {
   saveData: boolean;
 }
 
+/** Lab protocol of the page: 1 measures frame gaps only, 2 also the main-thread work of each frame. */
+export type LabProtocol = 1 | 2;
+
 export interface LabRunRequest {
   turnstile: string;
   lib: string;
   cal: string;
   device: LabDevice;
+  /** 1 when the body had no `protocol`. */
+  protocol: LabProtocol;
 }
 
-export interface LabStep {
+/** Main-thread work per frame, sent by protocol 2 pages. Null when no frame had a sample. */
+export interface LabStepWork {
+  workMeanMs: number | null;
+  workMedianMs: number | null;
+  workP95Ms: number | null;
+  workFrames: number | null;
+}
+
+/** Protocol 1 steps carry no work keys; protocol 2 steps carry all of them, after the protocol 1 keys. */
+export interface LabStep extends Partial<LabStepWork> {
   name: string;
   effects: string[];
   frames: number;
@@ -63,12 +77,18 @@ const STEP_NAMES: readonly string[] = ["baseline", "baseline-end", "all"];
 /** 32 random bytes, lowercase hex. */
 const KEY = /^[0-9a-f]{64}$/;
 
-const RUN_KEYS = ["turnstile", "lib", "cal", "device"];
+const RUN_REQUIRED_KEYS = ["turnstile", "lib", "cal", "device"];
+const RUN_KEYS = [...RUN_REQUIRED_KEYS, "protocol"];
+const PROTOCOLS: readonly unknown[] = [1, 2];
 const DEVICE_KEYS = ["score", "cold", "warm", "kernels", "tickMs", "cores", "memoryGb", "refreshHz", "dpr", "viewportWidth", "reducedMotion", "saveData"];
 const STEP_REQUEST_KEYS = ["key", "step", "done"];
 const STEP_KEYS = ["name", "effects", "frames", "durationMs", "medianMs", "p95Ms", "maxMs", "over"];
+/** Sent all together or not at all. */
+const WORK_KEYS = ["workMeanMs", "workMedianMs", "workP95Ms", "workFrames"];
+const STEP_WORK_KEYS = [...STEP_KEYS, ...WORK_KEYS];
 
 const oneDecimal = (v: number) => Math.round(v * 10) / 10;
+const twoDecimals = (v: number) => Math.round(v * 100) / 100;
 const significant = (v: number, digits: number) => Number(v.toPrecision(digits));
 const orNull = <T>(v: T | null, f: (v: T) => T) => (v === null ? null : f(v));
 
@@ -83,8 +103,10 @@ function isEffects(v: unknown): v is string[] {
 
 /** Returns the normalized run request when `input` (parsed JSON) is valid, else null. */
 export function validateLabRun(input: unknown): LabRunRequest | null {
-  if (!isObject(input) || !hasKeys(input, RUN_KEYS, RUN_KEYS)) return null;
+  if (!isObject(input) || !hasKeys(input, RUN_KEYS, RUN_REQUIRED_KEYS)) return null;
   const { turnstile, lib, cal, device: d } = input;
+  const protocol = Object.prototype.hasOwnProperty.call(input, "protocol") ? input.protocol : 1;
+  if (!PROTOCOLS.includes(protocol)) return null;
   if (typeof turnstile !== "string" || turnstile.length === 0 || turnstile.length > MAX_TURNSTILE_TOKEN) return null;
   if (typeof lib !== "string" || !LIB.test(lib)) return null;
   if (typeof cal !== "string" || !CAL.test(cal)) return null;
@@ -119,6 +141,7 @@ export function validateLabRun(input: unknown): LabRunRequest | null {
       reducedMotion: d.reducedMotion,
       saveData: d.saveData,
     },
+    protocol: protocol as LabProtocol,
   };
 }
 
@@ -127,15 +150,21 @@ export function validateLabStep(input: unknown): LabStepRequest | null {
   if (!isObject(input) || !hasKeys(input, STEP_REQUEST_KEYS, STEP_REQUEST_KEYS)) return null;
   const { key, step: s, done } = input;
   if (typeof key !== "string" || !KEY.test(key) || typeof done !== "boolean") return null;
-  if (!isObject(s) || !hasKeys(s, STEP_KEYS, STEP_KEYS)) return null;
+  if (!isObject(s)) return null;
+  const work = Object.prototype.hasOwnProperty.call(s, "workMeanMs");
+  const keys = work ? STEP_WORK_KEYS : STEP_KEYS;
+  if (!hasKeys(s, keys, keys)) return null;
   if (typeof s.name !== "string" || !(STEP_NAMES.includes(s.name) || EFFECT.test(s.name))) return null;
   if (!isEffects(s.effects)) return null;
   if (!isInt(s.frames, 0, MAX_STEP_FRAMES) || !isInt(s.over, 0, s.frames)) return null;
   const ms = (v: unknown) => isNum(v, 0, MAX_STEP_MS);
   if (!ms(s.durationMs) || !ms(s.medianMs) || !ms(s.p95Ms) || !ms(s.maxMs)) return null;
-  return {
-    key,
-    done,
-    step: { name: s.name, effects: s.effects, frames: s.frames, durationMs: s.durationMs, medianMs: s.medianMs, p95Ms: s.p95Ms, maxMs: s.maxMs, over: s.over },
-  };
+  const step: LabStep = { name: s.name, effects: s.effects, frames: s.frames, durationMs: s.durationMs, medianMs: s.medianMs, p95Ms: s.p95Ms, maxMs: s.maxMs, over: s.over };
+  if (work) {
+    const { workMeanMs: mean, workMedianMs: median, workP95Ms: p95, workFrames } = s;
+    if (!isNullable(mean, ms) || !isNullable(median, ms) || !isNullable(p95, ms)) return null;
+    if (!isNullable(workFrames, (v) => isInt(v, 0, s.frames as number))) return null;
+    Object.assign(step, { workMeanMs: orNull(mean, twoDecimals), workMedianMs: orNull(median, twoDecimals), workP95Ms: orNull(p95, twoDecimals), workFrames } satisfies LabStepWork);
+  }
+  return { key, done, step };
 }
