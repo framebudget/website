@@ -1,0 +1,201 @@
+/*
+ * framebudget design tokens.
+ * Source of truth for color, type, space, radius and motion.
+ * Mirrors tokens.json. Fonts are self-hosted (SIL OFL 1.1), see fonts/.
+ *
+ * Dark is the default. A light variant exists only for documentation
+ * themes that must sit on white: opt in with data-theme="light".
+ */
+
+@font-face {
+  font-family: "Archivo";
+  src: url("/fonts/archivo-var.woff2") format("woff2");
+  font-weight: 400 800;
+  font-stretch: 100% 125%;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Martian Mono";
+  src: url("/fonts/martian-mono-var.woff2") format("woff2");
+  font-weight: 400 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+:root {
+  color-scheme: dark;
+
+  /* Base palette, dark. Four depths of ink, from below the page to above it. */
+  --fb-deep: #0b0e1e;
+  --fb-night: #0f1225;
+  --fb-ink: #161a2e;
+  --fb-ink-raised: #1f2440;
+  --fb-ink-line: #2a3052;
+  --fb-ink-line-strong: #5f6896;
+  --fb-chalk: #e8ebf2;
+  --fb-mist: #9aa3bc;
+  --fb-vsync: #ff5a92;
+
+  /* Base palette, light (documentation only) */
+  --fb-grid: #eef1f5;
+  --fb-paper: #ffffff;
+  --fb-rule: #d5dae4;
+  --fb-slate: #545c73;
+  --fb-vsync-deep: #d1185e;
+
+  /* Effect colors: work that spends frame time (charts, meters, the mark).
+     Fills only. Label them in Night, which passes AA on every one. */
+  --fb-amber: #f2b21b;
+  --fb-violet: #9474f2;
+  --fb-mint: #2fb67c;
+  --fb-cyan: #1fa6ca;
+  --fb-blue: #6482f5;
+  --fb-pewter: #7d86a6;
+  --fb-stone: #b8c0d0;
+
+  --effect-app: var(--fb-pewter);
+  --effect-parallax: var(--fb-amber);
+  --effect-page-transition: var(--fb-violet);
+  --effect-canvas: var(--fb-mint);
+  --effect-sound: var(--fb-cyan);
+  --effect-blur: var(--fb-blue);
+  --effect-label: var(--fb-night);
+
+  /* Roles */
+  --color-bg: var(--fb-night);
+  --color-surface: var(--fb-ink);
+  --color-surface-raised: var(--fb-ink-raised);
+  --color-surface-sunken: var(--fb-deep);
+  --color-border: var(--fb-ink-line);
+  --color-border-strong: var(--fb-ink-line-strong);
+  --color-text: var(--fb-chalk);
+  --color-muted: var(--fb-mist);
+  --color-accent: var(--fb-vsync);
+  --color-accent-text: var(--fb-night);
+  --color-focus: var(--fb-vsync);
+  --color-button: var(--fb-chalk);
+  --color-button-hover: #ffffff;
+  --color-button-text: var(--fb-night);
+  --color-code-bg: var(--fb-deep);
+  --color-code-border: var(--fb-ink-line);
+  --color-code-text: var(--fb-chalk);
+  --color-code-muted: var(--fb-mist);
+
+  /* Code tokens, on --color-code-bg */
+  --code-keyword: #c4b1ff;
+  --code-string: #86e3b9;
+  --code-function: #f7cd63;
+  --code-number: #ff8fb6;
+
+  /* Tiers: a device's allowance. Text-safe pairs (AA on their own tint). */
+  --tier-full: #5fd6a2;
+  --tier-full-bg: #133a30;
+  --tier-high: #8db4ff;
+  --tier-high-bg: #1b2d57;
+  --tier-medium: #f5c35b;
+  --tier-medium-bg: #3a2f1c;
+  --tier-lite: #b4bbcf;
+  --tier-lite-bg: #272c4a;
+
+  /* Depth. Surfaces are lit from above by a hairline, never by a drop shadow. */
+  --edge-light: inset 0 1px 0 rgb(232 235 242 / 0.05);
+  --page-glow: radial-gradient(120% 60% at 50% -10%, #1a1f3d 0%, rgb(15 18 37 / 0) 60%);
+
+  /* Type */
+  --font-sans: "Archivo", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "Martian Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  --width-display: 112%;
+  --width-text: 100%;
+
+  /* Classic typographic scale (px): 12 14 16 18 21 24 36 48 60 72 */
+  --text-xs: 0.75rem;
+  --text-sm: 0.875rem;
+  --text-base: 1rem;
+  --text-md: 1.125rem;
+  --text-lg: 1.3125rem;
+  --text-xl: 1.5rem;
+  --text-2xl: 2.25rem;
+  --text-3xl: 3rem;
+  --text-4xl: 3.75rem;
+  --text-5xl: 4.5rem;
+
+  --leading-tight: 1.05;
+  --leading-snug: 1.25;
+  --leading-text: 1.55;
+  --tracking-display: -0.02em;
+  --measure: 66ch;
+
+  /* Space: 4 px base */
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.5rem;
+  --space-6: 2rem;
+  --space-7: 3rem;
+  --space-8: 4rem;
+  --space-9: 6rem;
+  --space-10: 8rem;
+
+  /* Radius follows hierarchy: the smaller the thing, the sharper it is */
+  --radius-segment: 2px;
+  --radius-control: 6px;
+  --radius-panel: 12px;
+  --radius-tile: 25%;
+  --radius-pill: 999px;
+
+  /* Motion. Durations are counted in frames at 60 Hz. */
+  --frame: 16.7ms;
+  --dur-6f: 100ms;
+  --dur-10f: 167ms;
+  --dur-16f: 267ms;
+  --dur-30f: 500ms;
+  --ease-settle: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --ease-drop: cubic-bezier(0.5, 0, 0.9, 0.4);
+  --ease-meter: cubic-bezier(0.3, 0, 0.3, 1);
+
+  --border-hairline: 1px solid var(--color-border);
+  --focus-ring: 0 0 0 2px var(--color-bg), 0 0 0 4px var(--color-focus);
+}
+
+/* Light variant for documentation themes. Not used by the brand pages. */
+[data-theme="light"] {
+  color-scheme: light;
+
+  --effect-app: var(--fb-stone);
+  --effect-label: var(--fb-ink);
+
+  --color-bg: var(--fb-grid);
+  --color-surface: var(--fb-paper);
+  --color-surface-raised: var(--fb-paper);
+  --color-surface-sunken: #e4e8ef;
+  --color-border: var(--fb-rule);
+  --color-border-strong: #7d859b;
+  --color-text: var(--fb-ink);
+  --color-muted: var(--fb-slate);
+  --color-accent: var(--fb-vsync-deep);
+  --color-accent-text: #ffffff;
+  --color-focus: var(--fb-vsync-deep);
+  --color-button: var(--fb-ink);
+  --color-button-hover: var(--fb-ink-raised);
+  --color-button-text: #ffffff;
+  /* Code roles are not overridden: code sits on Deep in both themes. */
+
+  --tier-full: #0f7a4f;
+  --tier-full-bg: #e3f4ec;
+  --tier-high: #1d5fc0;
+  --tier-high-bg: #e4edfb;
+  --tier-medium: #9a5b00;
+  --tier-medium-bg: #fbf0dc;
+  --tier-lite: #5a637a;
+  --tier-lite-bg: #e6e9f0;
+
+  --edge-light: none;
+  --page-glow: none;
+
+  /* Composite tokens resolve where they are declared, so restate them here. */
+  --border-hairline: 1px solid var(--color-border);
+  --focus-ring: 0 0 0 2px var(--color-bg), 0 0 0 4px var(--color-focus);
+}

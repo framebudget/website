@@ -1,0 +1,255 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<!-- framebudget:boot -->
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>framebudget API reference</title>
+<meta name="description" content="Every export of framebudget: the budget object, the boot script, effects and tiers, simulating a device, the governor, calibration, telemetry, the React hooks and the diagnostics panel.">
+<meta name="theme-color" content="#0f1225">
+<meta property="og:type" content="website">
+<meta property="og:title" content="framebudget API reference">
+<meta property="og:description" content="Keep the effects. Lose the stutter.">
+<meta property="og:image" content="/og.png">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" href="/logo/favicon.svg" type="image/svg+xml">
+<link rel="icon" href="/logo/favicon-32.png" sizes="32x32" type="image/png">
+<link rel="preload" href="/fonts/archivo-var.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="/fonts/martian-mono-var.woff2" as="font" type="font/woff2" crossorigin>
+<script type="module" src="/src/main.ts"></script>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+
+<!-- fb:nav:api -->
+
+<main id="main" class="shell docs">
+  <header class="docs__head">
+    <h1 class="page-title" data-reveal="blur"><span class="w" style="--i:0">API</span> <span class="w" style="--i:1">reference</span></h1>
+    <p class="docs__lede">One object, <code>budget</code>, answers whether an effect may run. Everything else feeds it better numbers or reports what it saw.</p>
+    <div class="docs__live panel">
+      <p class="panel__label">This page, right now</p>
+      <pre class="code code--attrs"><code><!-- fb:reserve:html-attrs <html data-framebudget="..."> --></code></pre>
+    </div>
+  </header>
+
+  <div class="docs__body">
+    <nav class="toc" aria-label="On this page">
+      <p class="toc__title">On this page</p>
+      <ul>
+        <li><a href="#install">Install</a></li>
+        <li><a href="#boot">Boot script</a></li>
+        <li><a href="#budget">The budget</a></li>
+        <li><a href="#reasons">Change reasons</a></li>
+        <li><a href="#effects">Effects</a></li>
+        <li><a href="#tiers">Tiers</a></li>
+        <li><a href="#simulate">Simulating a device</a></li>
+        <li><a href="#governor">Governor</a></li>
+        <li><a href="#learning">Local learning</a></li>
+        <li><a href="#calibration">Calibration</a></li>
+        <li><a href="#telemetry">Telemetry</a></li>
+        <li><a href="#react">React</a></li>
+        <li><a href="#debug">Debugging</a></li>
+      </ul>
+    </nav>
+
+    <div class="docs__content">
+      <section id="install" aria-labelledby="install-title">
+        <h2 id="install-title">Install</h2>
+        <div class="install">
+          <span class="install__prompt" aria-hidden="true">$</span>
+          <code class="install__cmd">npm i framebudget</code>
+          <button class="copy press" type="button" data-copy="npm i framebudget" aria-label="Copy the install command" data-cuelume-tap><span class="copy__label">Copy</span></button>
+        </div>
+        <p>ESM only, with type declarations. <code>react</code> is an optional peer dependency, needed only for <code>framebudget/react</code>.</p>
+        <table class="table">
+          <thead><tr><th scope="col">Entry</th><th scope="col">What it holds</th></tr></thead>
+          <tbody>
+            <tr><th scope="row"><code>framebudget</code></th><td><code>budget</code>, <code>configure</code>, <code>createBudget</code>, <code>Tier</code>, <code>defaultCalibration</code> and the types.</td></tr>
+            <tr><th scope="row"><code>framebudget/boot</code></th><td><code>bootScript</code> and <code>createBootScript(options)</code>, the inline script for <code>&lt;head&gt;</code>.</td></tr>
+            <tr><th scope="row"><code>framebudget/react</code></th><td><code>useBudget</code>, <code>useTier</code> and <code>BudgetProvider</code>.</td></tr>
+            <tr><th scope="row"><code>framebudget/panel</code></th><td><code>mountPanel(budget)</code>, the diagnostics overlay.</td></tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section id="boot" aria-labelledby="boot-title">
+        <h2 id="boot-title">Boot script</h2>
+        <p>Inline it as the first script in <code>&lt;head&gt;</code>, before your CSS. It runs the cold benchmark (about 1.6 ms of work), decides, and writes the result on <code>&lt;html&gt;</code> before the first paint. It is self-contained (3.7 KB gzipped), never throws, and works when any browser API is missing.</p>
+<pre class="code"><code data-lang="ts">import { bootScript, createBootScript } from "framebudget/boot";
+
+// Default options:
+const head = `&lt;script&gt;${bootScript}&lt;/script&gt;`;
+
+// With the calibration you pass to configure(), so boot and core agree:
+const custom = createBootScript({ calibration: { effects: { confetti: { threshold: 60, cost: 4, motion: true } } } });</code></pre>
+        <p>CSS can then gate effects without any JavaScript:</p>
+<pre class="code"><code data-lang="css">html[data-framebudget-effects~="parallax"] .hero { transform: translateY(var(--parallax)); }
+html[data-framebudget-effects~="blur"] .sheet { backdrop-filter: blur(16px); }</code></pre>
+        <p>With a Content Security Policy, add a nonce or the script's hash.</p>
+      </section>
+
+      <section id="budget" aria-labelledby="budget-title">
+        <h2 id="budget-title">The budget</h2>
+        <p>The core starts on the first call to any method. It adopts the boot script's decision, runs a longer warm benchmark at the <code>load</code> event, then starts the governor. On the server, <code>allows()</code> answers false and the tier is Lite.</p>
+        <table class="table">
+          <thead><tr><th scope="col">Member</th><th scope="col">Description</th></tr></thead>
+          <tbody>
+            <tr><th scope="row"><code>budget.allows(effect)</code></th><td>May this effect run on this device? Unknown effects answer false.</td></tr>
+            <tr><th scope="row"><code>budget.tier</code></th><td>The current tier: <code>"Full"</code>, <code>"High"</code>, <code>"Medium"</code> or <code>"Lite"</code>.</td></tr>
+            <tr><th scope="row"><code>budget.score</code></th><td>The score after hardware caps and pressure, or null on the server.</td></tr>
+            <tr><th scope="row"><code>budget.effects()</code></th><td>The allowed effects.</td></tr>
+            <tr><th scope="row"><code>budget.snapshot()</code></th><td>Everything: scores, kernel rates, hints, the reason each effect is off, fps per source, the calibration.</td></tr>
+            <tr><th scope="row"><code>budget.on("change", fn)</code></th><td>Calls <code>fn(snapshot, reason)</code> and returns the unsubscribe function.</td></tr>
+            <tr><th scope="row"><code>budget.off("change", fn)</code></th><td>Unsubscribes.</td></tr>
+            <tr><th scope="row"><code>budget.reportFrame(gapMs, source?)</code></th><td>Reports the time between two frames, for the governor.</td></tr>
+            <tr><th scope="row"><code>budget.register(name, definition)</code></th><td>Adds an effect, or replaces one.</td></tr>
+            <tr><th scope="row"><code>budget.configure(options)</code></th><td>Calibration, governor and sharing options. Call it before the <code>load</code> event. Also exported as <code>configure</code>.</td></tr>
+            <tr><th scope="row"><code>budget.force(tier | "auto")</code></th><td>Forces a tier for the session.</td></tr>
+            <tr><th scope="row"><code>budget.simulate(score | null)</code></th><td>Debug and demo only: replaces the measured score for the session.</td></tr>
+            <tr><th scope="row"><code>createBudget(options?)</code></th><td>A separate instance, for tests or embedded widgets.</td></tr>
+          </tbody>
+        </table>
+<pre class="code"><code data-lang="ts">import { budget } from "framebudget";
+
+if (budget.allows("parallax")) startParallax();
+
+budget.on("change", (snapshot, reason) =&gt; {
+  update(snapshot.effects);
+});</code></pre>
+      </section>
+
+      <section id="reasons" aria-labelledby="reasons-title">
+        <h2 id="reasons-title">Change reasons</h2>
+        <table class="table">
+          <thead><tr><th scope="col">Reason</th><th scope="col">When</th></tr></thead>
+          <tbody>
+            <tr><th scope="row"><code>warm</code></th><td>The warm benchmark at load changed the decision.</td></tr>
+            <tr><th scope="row"><code>governor</code></th><td>The governor stepped an effect down.</td></tr>
+            <tr><th scope="row"><code>pressure</code></th><td>Compute Pressure changed state.</td></tr>
+            <tr><th scope="row"><code>motion</code></th><td>The reduced-motion, Save-Data or connection preference changed.</td></tr>
+            <tr><th scope="row"><code>force</code></th><td><code>force()</code> was called.</td></tr>
+            <tr><th scope="row"><code>simulate</code></th><td><code>simulate()</code> was called. Always emitted, even when nothing changed.</td></tr>
+            <tr><th scope="row"><code>configure</code></th><td><code>configure()</code> or <code>register()</code> changed the decision.</td></tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section id="effects" aria-labelledby="effects-title">
+        <h2 id="effects-title">Effects</h2>
+        <p>Each effect has a score threshold, a relative frame cost, and optional flags. <code>motion</code> effects turn off under <code>prefers-reduced-motion: reduce</code>; <code>data</code> effects turn off under Save-Data or a 2g connection. These are the library's built-in effects:</p>
+        <!-- fb:defaults -->
+        <p>Register your own, and pass the same definitions to <code>createBootScript</code> so the first paint already knows them:</p>
+<pre class="code"><code data-lang="ts">budget.register("confetti", { threshold: 60, cost: 4, motion: true });</code></pre>
+        <p><strong>Hysteresis.</strong> An effect that was on stays on down to <code>threshold * (1 - hysteresis)</code>, and an effect that was off turns on only from <code>threshold * (1 + hysteresis)</code>. The default margin is 10%, and the previous state is kept across pages.</p>
+      </section>
+
+      <section id="tiers" aria-labelledby="tiers-title">
+        <h2 id="tiers-title">Tiers</h2>
+        <p>A tier's set is every effect whose threshold is at or below the tier floor. The reported tier is the highest tier whose whole set is allowed. Effects off because of a user preference do not lower the tier; thresholds, learning and the governor do.</p>
+        <table class="table">
+          <thead><tr><th scope="col">Tier</th><th scope="col" class="r">Floor</th><th scope="col">Built-in effects</th></tr></thead>
+          <tbody>
+            <tr><th scope="row"><span class="tier" data-tier="Lite">Lite</span></th><td class="r num">20</td><td>hover</td></tr>
+            <tr><th scope="row"><span class="tier" data-tier="Medium">Medium</span></th><td class="r num">35</td><td>adds canvasLowRes, entrances</td></tr>
+            <tr><th scope="row"><span class="tier" data-tier="High">High</span></th><td class="r num">70</td><td>adds shimmer, sound, pageTransition, parallax</td></tr>
+            <tr><th scope="row"><span class="tier" data-tier="Full">Full</span></th><td class="r num">120</td><td>adds blur, canvasHiRes</td></tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section id="simulate" aria-labelledby="simulate-title">
+        <h2 id="simulate-title">Simulating a device</h2>
+        <p><code>budget.simulate(score)</code> replaces the measured score for the session, and <code>budget.simulate(null)</code> returns to the real device. The boot script and the core both read the session value, so the next page's first paint already uses it. Try it: the device you picked on the home page is still active here, and the dock at the bottom takes you back.</p>
+        <p>The simulated score goes through the normal path: thresholds with hysteresis, hardware caps, pressure, reduced motion and the governor. While simulating, nothing is written about the real device and no telemetry is sent. <code>snapshot().simulated</code> holds the score. This API is for debugging and demos, not for product decisions.</p>
+<pre class="code"><code data-lang="ts">budget.simulate(35);   // a budget phone from 2019
+budget.simulate(null); // back to the real device</code></pre>
+      </section>
+
+      <section id="governor" aria-labelledby="governor-title">
+        <h2 id="governor-title">Governor</h2>
+        <p>The governor starts at load, ignores the first 3 s, then judges windows of 30 frames by their median gap. A window under the target (45 fps) is a strike. After 3 strikes in a row from one source it steps one effect down, waits a 2 s cooldown, and emits <code>change</code>.</p>
+        <ul class="docs__list">
+          <li>Frames reported as <code>"main"</code> or <code>"worker"</code> step down the most expensive allowed effect.</li>
+          <li>Frames reported with an effect's name step down that effect: report a canvas loop as <code>budget.reportFrame(gap, "canvasHiRes")</code>.</li>
+          <li>framebudget samples main-thread frames itself during the first seconds and while the visitor interacts. Turn that off with <code>configure({ governor: { auto: false } })</code>.</li>
+        </ul>
+<pre class="code"><code data-lang="ts">// worker
+postMessage({ type: "frame", gap });
+// page
+worker.addEventListener("message", (e) =&gt; {
+  if (e.data.type === "frame") budget.reportFrame(e.data.gap, "worker");
+});</code></pre>
+        <p>Tune <code>targetFps</code>, <code>windowFrames</code>, <code>strikes</code>, <code>warmupMs</code>, <code>cooldownMs</code>, <code>cleanWindows</code> and <code>maxGapMs</code> with <code>configure({ governor })</code>.</p>
+      </section>
+
+      <section id="learning" aria-labelledby="learning-title">
+        <h2 id="learning-title">Local learning</h2>
+        <p>Always on, and it stays on the device: one guarded <code>localStorage</code> entry per origin. When the governor steps an effect down, the next visits start without it. After 5 clean visits it is tried again; if it holds up it is forgotten, and if it stutters again the wait doubles. The cached warm score and the last qualified effects live in the same entry.</p>
+      </section>
+
+      <section id="calibration" aria-labelledby="calibration-title">
+        <h2 id="calibration-title">Calibration</h2>
+        <p>Every number that turns measurements into decisions lives in <code>defaultCalibration</code>: reference rates, effect thresholds and costs, tier floors, hysteresis, hardware caps, pressure factors, the fallback score, the maximum age of a cached score and the clean visits before a retry. Precedence: built-in numbers, then a calibration fetched from your server, then your overrides. Every value is validated.</p>
+<pre class="code"><code data-lang="ts">configure({
+  calibration: {
+    effects: { parallax: { threshold: 80 } },
+    tiers: { High: 80 },
+    hysteresis: 0.15,
+  },
+});</code></pre>
+      </section>
+
+      <section id="telemetry" aria-labelledby="telemetry-title">
+        <h2 id="telemetry-title">Telemetry</h2>
+        <p>Off by default, with no default endpoint. Only the site developer can turn it on:</p>
+<pre class="code"><code data-lang="ts">configure({
+  share: {
+    endpoint: "https://example.com/framebudget",
+    sampleRate: 0.1, // share of page views that report
+    calibrationUrl: "https://example.com/framebudget/calibration.json",
+  },
+});</code></pre>
+        <ul class="docs__list">
+          <li><strong>Sent:</strong> calibration version, rounded scores, kernel rates, clock resolution, cores, memory, pressure, the reduced-motion preference, the tier, allowed and stepped-down effects, median fps per source.</li>
+          <li><strong>Never sent:</strong> identifiers, cookies, the URL, the user agent, timestamps.</li>
+          <li><strong>When:</strong> one <code>navigator.sendBeacon</code> call when the page is hidden, after load, for sampled page views only.</li>
+          <li><strong>Never</strong> under Global Privacy Control or Save-Data, while a tier is forced, or while a device is simulated.</li>
+          <li>The beacon still carries what every request carries, such as the IP address and the <code>Origin</code> header.</li>
+        </ul>
+      </section>
+
+      <section id="react" aria-labelledby="react-title">
+        <h2 id="react-title">React</h2>
+<pre class="code"><code data-lang="ts">import { useBudget, useTier } from "framebudget/react";
+
+function Page() {
+  const animate = useBudget("pageTransition"); // boolean, re-renders on change
+  const tier = useTier();
+  return animate ? &lt;AnimatedRoute /&gt; : &lt;Route /&gt;;
+}</code></pre>
+        <p>During server rendering and hydration, <code>useBudget</code> answers false and <code>useTier</code> answers Lite, so effects only start on the client. <code>BudgetProvider</code> is only needed for a budget other than the page's.</p>
+      </section>
+
+      <section id="debug" aria-labelledby="debug-title">
+        <h2 id="debug-title">Debugging</h2>
+        <table class="table">
+          <thead><tr><th scope="col">Tool</th><th scope="col">What it does</th></tr></thead>
+          <tbody>
+            <tr><th scope="row"><code>?framebudget</code></th><td>Opens the diagnostics panel: scores, kernel rates, hints, each effect's state, fps per source, buttons to force a tier. Loaded on demand from <code>framebudget/panel</code>.</td></tr>
+            <tr><th scope="row"><code>?framebudget-tier=High</code></th><td>Forces a tier for the session. <code>auto</code> goes back.</td></tr>
+            <tr><th scope="row"><code>?framebudget-score=40</code></th><td>Simulates a score for the session. <code>off</code> goes back.</td></tr>
+            <tr><th scope="row"><code>data-framebudget</code></th><td>The tier, on <code>&lt;html&gt;</code>.</td></tr>
+            <tr><th scope="row"><code>data-framebudget-effects</code></th><td>The allowed effects, space separated, on <code>&lt;html&gt;</code>.</td></tr>
+          </tbody>
+        </table>
+        <p class="docs__back"><a class="button press" href="/#simulator" data-cuelume-navigate>Open the simulator</a></p>
+      </section>
+    </div>
+  </div>
+</main>
+
+<!-- fb:footer -->
+<!-- fb:dock -->
+</body>
+</html>
