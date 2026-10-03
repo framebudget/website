@@ -2,7 +2,9 @@ import { resolve } from "node:path";
 import { defineConfig, type Plugin } from "vite";
 import { createBootScript } from "framebudget/boot";
 import { calibration } from "./src/effects";
+import { llmsFiles } from "./src/llms";
 import { defaultsTable, dock, footer, highlightCode, ladder, nav, picker, registry, reserve, shareNote, simRows } from "./src/render";
+import { seoHead, type SeoPage } from "./src/seo";
 
 /**
  * Cross-document view transitions are opted into in CSS. This classic script
@@ -38,6 +40,7 @@ function framebudgetPages(): Plugin {
       handler(html) {
         const page = html
           .replace("<!-- framebudget:boot -->", () => `<script>${boot}</script>\n<script>${PAGE_TRANSITION_GATE}</script>`)
+          .replace(/<!-- fb:seo:(home|api|privacy) -->/, (_all, seoPage: SeoPage) => seoHead(seoPage, html))
           .replace(/<!-- fb:picker:([\w-]+)( hero)? -->/g, (_all, label: string, hero?: string) => picker(label, !!hero))
           .replace(/<!-- fb:reserve:([\w-]+) (.*?) -->/g, (_all, id: string, initial: string) => reserve(id, initial))
           .replace(/<!-- fb:([\w:-]+) -->/g, (all, key: string) => {
@@ -78,7 +81,7 @@ function inlineCss(): Plugin {
 }
 
 export default defineConfig({
-  plugins: [framebudgetPages(), inlineCss()],
+  plugins: [framebudgetPages(), inlineCss(), llmsFiles()],
   build: {
     target: "es2020",
     cssCodeSplit: false,

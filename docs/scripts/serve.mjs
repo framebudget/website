@@ -15,13 +15,17 @@ const TYPES = {
   ".png": "image/png",
   ".woff2": "font/woff2",
   ".txt": "text/plain; charset=utf-8",
+  ".xml": "application/xml; charset=utf-8",
+  ".webmanifest": "application/manifest+json; charset=utf-8",
 };
-const COMPRESS = new Set([".html", ".js", ".css", ".svg", ".txt"]);
+const COMPRESS = new Set([".html", ".js", ".css", ".svg", ".txt", ".xml", ".webmanifest"]);
 
 createServer(async (req, res) => {
   try {
     let path = normalize(decodeURIComponent(new URL(req.url, "http://x").pathname));
     if (path.endsWith("/")) path += "index.html";
+    // Like the Worker's html_handling "auto-trailing-slash": /api serves api.html.
+    else if (!extname(path)) path += ".html";
     const file = join(root, path);
     if (!file.startsWith(root) || !(await stat(file)).isFile()) throw new Error("not found");
     const ext = extname(file);

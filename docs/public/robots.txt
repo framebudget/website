@@ -1,0 +1,8 @@
+# framebudget.dev
+# /api is the API reference page and stays crawlable. /api/ and below are the
+# Worker's endpoints (device reports and calibration), not pages.
+User-agent: *
+Allow: /
+Disallow: /api/
+
+Sitemap: https://framebudget.dev/sitemap.xml

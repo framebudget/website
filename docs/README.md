@@ -11,7 +11,7 @@ Run these in `docs/`. The site uses the library from the repository root through
 | `npm install` | Installs Vite, TypeScript, `motion` and `cuelume`, and links `framebudget` from the repository root. |
 | `npm run dev` | Starts the Vite dev server with hot reload. |
 | `npm run build` | Type-checks, then writes the static site to `dist/`. |
-| `npm run serve` | Serves `dist/` with gzip and long-lived caching for hashed assets, like a production host. Optional port: `npm run serve -- 8080`. |
+| `npm run serve` | Serves `dist/` with gzip and long-lived caching for hashed assets, like a production host. Extensionless paths serve the matching page (`/api` serves `api.html`), like the Worker. Optional port: `npm run serve -- 8080`. |
 | `node scripts/interaction-check.mjs <cdp-url> <url-part> <throttle> <selector>...` | Clicks each selector with real input events through the DevTools protocol of an open browser, under CPU throttling, and reports the interaction time, long tasks, layout shift and any view transition. |
 
 ## How it uses framebudget
@@ -52,6 +52,14 @@ The site enables framebudget's telemetry for its own visitors (`src/share.ts`, `
 ## Sound
 
 `src/sound.ts` follows the cuelume pattern: `import("cuelume")` when the browser is idle, `setVolume(0.45)`, `setEnabled()` from the visitor's choice and the `sound` effect, and `bind()` for the `data-cuelume-tap`, `-select`, `-toggle`, `-navigate` and `-emphasis` attributes in the markup. Outcomes play from code with `cue()`: copying (`success`), FAQ open and close, and the governor stepping an effect down (`warning`). The speaker button in the header stores the choice in `localStorage` (`framebudget-site-sound`); when framebudget turns `sound` off, the button shows it as unavailable.
+
+## Search, social previews and AI agents
+
+- Each page has `<!-- fb:seo:home|api|privacy -->` in its `<head>`. `vite.config.ts` replaces it with the output of `seoHead()` from `src/seo.ts`: canonical URL, `robots` meta, Open Graph and Twitter tags (absolute `og.png`, 1200x630), the `llms.txt` alternate link, the apple-touch-icon and manifest links, and JSON-LD (`WebSite`, `SoftwareSourceCode`, and a `WebPage` or `TechArticle`). The title and description come from the page's own `<title>` and `<meta name="description">`, so edit those in the HTML.
+- Canonicals and the sitemap use the paths the Worker serves with `html_handling: "auto-trailing-slash"`: `/`, `/api` and `/privacy`. Link pages the same way, without `.html`.
+- `public/robots.txt` allows everything except `/api/` (the Worker's endpoints; `/api` itself is the API reference page) and points to `public/sitemap.xml`. Add new pages to the sitemap and to `PATHS` in `src/seo.ts`.
+- `public/llms.txt` follows [llmstxt.org](https://llmstxt.org): a short summary and links for AI agents. The plugin in `src/llms.ts` derives two more files at build time (and serves them in `npm run dev`), so nothing is copied by hand: `llm.txt`, the same content for agents that ask for that name, and `llms-full.txt`, the root `README.md` without its Development section under a short header.
+- `public/site.webmanifest` lists `logo/icon-192.png` and `logo/icon-512.png`. Those and `logo/apple-touch-icon.png` (180x180) are `mark.svg` rendered as a full-bleed square on Ink, since iOS rounds the corners itself.
 
 ## Assets
 
