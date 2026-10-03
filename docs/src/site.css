@@ -1895,6 +1895,9 @@ h3 {
 }
 
 .lab-chart {
+  /* .chart sits in the home page's named grid area; here it is a plain grid item. Without this the
+     implicit "chart" area adds columns and squeezes the side column to nothing on a phone. */
+  grid-area: auto;
   padding: 14px 16px 12px;
 }
 
@@ -1909,21 +1912,129 @@ h3 {
 }
 
 @media (max-width: 720px) {
+  /* A compact panel: it holds at the bottom of the screen, so the track above it must stay visible. */
+  .lab-panel {
+    padding-block: var(--space-3);
+  }
+
   .lab-panel__inner {
     grid-template-columns: minmax(0, 1fr);
+    gap: var(--space-3);
+  }
+
+  .lab-panel__status {
+    font-size: var(--text-sm);
   }
 
   .lab-hero {
-    height: 40px;
+    height: 32px;
+    margin-top: var(--space-2);
   }
 
   .lab-hero__title {
-    line-height: 40px;
+    font-size: 1.05rem;
+    line-height: 32px;
+  }
+
+  .lab-install {
+    height: 40px;
+    margin-top: var(--space-2);
+    font-size: var(--text-sm);
+  }
+
+  .lab-readouts {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: var(--space-2);
+    margin-top: var(--space-2);
+  }
+
+  .lab-readouts dd {
+    font-size: var(--text-sm);
+  }
+
+  .lab-chart {
+    padding: 10px 12px;
+  }
+
+  /* Title and readouts on one line; the chart is a strip, not a panel. */
+  .lab-chart .chart__head {
+    flex-wrap: nowrap;
+    margin-bottom: var(--space-2);
+  }
+
+  .lab-chart .chart__title {
+    flex: 1 1 0;
+    min-width: 0;
+    overflow: hidden;
+    font-size: var(--text-sm);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .lab-chart .readouts--chart dd {
+    white-space: nowrap;
+  }
+
+  .lab-chart .readouts--chart {
+    flex: none;
+    gap: var(--space-3);
+    font-size: var(--text-xs);
+  }
+
+  .lab-chart .readouts--chart dt {
+    display: none;
   }
 
   .lab-chart .chart__plot {
-    height: 96px;
+    height: 64px;
   }
+
+  .lab-block {
+    min-height: 38vh;
+  }
+
+  /* Four columns do not fit a phone: the step names a row, the three numbers sit under it. */
+  .lab-results thead {
+    display: none;
+  }
+
+  .lab-results tr {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 2px var(--space-3);
+    padding-block: var(--space-3);
+    border-bottom: var(--border-hairline);
+  }
+
+  .lab-results th,
+  .lab-results td {
+    padding: 0;
+    border: 0;
+  }
+
+  .lab-results th {
+    grid-column: 1 / -1;
+  }
+
+  /* A "not measured" note has no number to label and spans the row. */
+  .lab-results td[colspan] {
+    grid-column: 1 / -1;
+    color: var(--color-muted);
+  }
+
+  .lab-results td[data-label]::before {
+    display: block;
+    color: var(--color-muted);
+    font-size: var(--text-xs);
+    content: attr(data-label);
+  }
+}
+
+/* While a run measures, the page is the stage: no footer or dock under the panel. */
+:root[data-lab-running] .footer,
+:root[data-lab-running] .dock {
+  display: none;
 }
 
 /* Footer and dock ----------------------------------------------------------------------- */

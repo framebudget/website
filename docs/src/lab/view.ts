@@ -28,19 +28,23 @@ export interface View {
 
 const ms = (value: number): string => `${value.toFixed(1)} ms`;
 
+/** The column headings, repeated on each cell so the phone layout can label the numbers (site.css). */
+const COLUMNS = ["Median frame", "95th percentile", "Late frames"] as const;
+
 function row(cells: readonly string[], head: string): HTMLTableRowElement {
   const tr = document.createElement("tr");
   const th = document.createElement("th");
   th.scope = "row";
   th.textContent = head;
   tr.append(th);
-  for (const text of cells) {
+  cells.forEach((text, index) => {
     const td = document.createElement("td");
     td.textContent = text;
     // A row with one cell spans the three result columns.
     if (cells.length === 1) td.colSpan = 3;
+    else td.dataset.label = COLUMNS[index];
     tr.append(td);
-  }
+  });
   return tr;
 }
 
@@ -66,6 +70,7 @@ export function mountView(root: HTMLElement): View {
     },
     running(on) {
       intro.hidden = on;
+      document.documentElement.toggleAttribute("data-lab-running", on);
       // The step progress takes over from the pre-run status, and vice versa.
       state.textContent = "";
       progress.textContent = on ? "Getting ready" : "";
