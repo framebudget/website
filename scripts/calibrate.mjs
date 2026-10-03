@@ -3,10 +3,10 @@
  * Proposes framebudget calibration numbers from exported reports.
  *
  *   npx wrangler d1 execute framebudget --remote --json --command "SELECT * FROM reports" > export.json
- *   node worker/scripts/calibrate.mjs export.json [--percentile 50] [--target-fps 55] [--max-under 0.05]
+ *   node scripts/calibrate.mjs export.json [--percentile 50] [--target-fps 55] [--max-under 0.05]
  *
  * Plain Node; the only import outside Node is `defaultCalibration` from the
- * installed `framebudget` package (`npm ci --prefix worker`), for the current
+ * installed `framebudget` package (`npm ci` at the repository root), for the current
  * reference rates. Accepts the wrangler JSON export (an array of
  * `{ results: [...] }`), a plain JSON array of rows, or a CSV export with a header row.
  */
@@ -27,7 +27,7 @@ Options:
                        Default: the most common version in the export.
   --reference <list>   Current reference rates, e.g. float=10800,typed=219000,alloc=30900,path=4860.
                        Default: defaultCalibration.reference of the installed framebudget package,
-                       overridden by worker/calibration.json.`;
+                       overridden by calibration.json at the repository root.`;
 
 /** Parses RFC 4180 CSV (quoted fields, doubled quotes, newlines inside quotes). */
 export function parseCsv(text) {

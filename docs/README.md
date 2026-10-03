@@ -47,7 +47,7 @@ The thresholds sit between the simulator's presets (Flagship 2025 240, Upper mid
 
 ## Sharing measurements
 
-The site enables framebudget's telemetry for its own visitors (`src/share.ts`, `src/setup.ts`): `endpoint: "/api/report"`, `sampleRate: 1`, `minIntervalDays: 7`, `calibrationUrl: "/api/calibration"`, served by the Worker in `worker/`. A notice at the bottom of the first visit says what is measured and links to `privacy.html`; **Don't share** stores `framebudget-site-share=off` in `localStorage` and calls `configure({ share: null })`, so nothing is sent from that moment on. The privacy page has the same control. GPC and Save-Data are honored by the library.
+The site enables framebudget's telemetry for its own visitors (`src/share.ts`, `src/setup.ts`): `endpoint: "/api/report"`, `sampleRate: 1`, `minIntervalDays: 7`, `calibrationUrl: "/api/calibration"`, served by the Worker at the repository root (see the root `README.md`). A notice at the bottom of the first visit says what is measured and links to `privacy.html`; **Don't share** stores `framebudget-site-share=off` in `localStorage` and calls `configure({ share: null })`, so nothing is sent from that moment on. The privacy page has the same control. GPC and Save-Data are honored by the library.
 
 ## Sound
 
@@ -65,8 +65,8 @@ The site enables framebudget's telemetry for its own visitors (`src/share.ts`, `
 
 `404.html` and `500.html` are pages of the build like the others: same header, footer, dock, stylesheet and scripts (`nav:error` renders the header with no current link). Their head uses `<!-- fb:seo:error -->`, which renders `<meta name="robots" content="noindex">` and the shared links, without a canonical or social tags, and they stay out of `public/sitemap.xml`. Every URL in them is root-relative, since they are served at whatever path failed.
 
-- `404.html`: the asset layer serves it with status 404 for any path with no matching file (`not_found_handling: "404-page"` in `worker/wrangler.jsonc`), and so does `npm run serve`. A small inline script shows the requested path (`location.pathname`, set with `textContent`).
-- `500.html`: the Worker serves it with status 500 when it fails while answering a page load (see `worker/README.md`). The retry button reloads the page.
+- `404.html`: the asset layer serves it with status 404 for any path with no matching file (`not_found_handling: "404-page"` in the root `wrangler.jsonc`), and so does `npm run serve`. A small inline script shows the requested path (`location.pathname`, set with `textContent`).
+- `500.html`: the Worker serves it with status 500 when it fails while answering a page load (see "Routing and errors" in the root `README.md`). The retry button reloads the page.
 
 ## Assets
 
