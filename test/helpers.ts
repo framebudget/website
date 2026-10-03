@@ -4,13 +4,13 @@ import type { Env } from "../src/handler";
 
 export const ORIGIN = "https://framebudget.dev";
 
-/** A D1 stand-in backed by an in-memory SQLite with the real migration applied. Records every bound statement. */
+/** A D1 stand-in backed by an in-memory SQLite with the real migrations applied. Records every bound statement. */
 export class SqliteD1 {
   readonly db = new DatabaseSync(":memory:");
   readonly statements: { sql: string; params: SQLInputValue[] }[] = [];
 
   constructor() {
-    this.db.exec(readFileSync(new URL("../migrations/0001_reports.sql", import.meta.url), "utf8"));
+    for (const file of ["0001_reports.sql", "0002_lab.sql"]) this.db.exec(readFileSync(new URL("../migrations/" + file, import.meta.url), "utf8"));
   }
 
   prepare(sql: string) {
@@ -21,6 +21,10 @@ export class SqliteD1 {
           const result = this.db.prepare(sql).run(...params);
           return { success: true, meta: { changes: Number(result.changes) } };
         },
+        first: async () => {
+          this.statements.push({ sql, params });
+          return this.db.prepare(sql).get(...params) ?? null;
+        },
       }),
     };
   }
@@ -28,14 +32,21 @@ export class SqliteD1 {
   rows(): Record<string, unknown>[] {
     return this.db.prepare("SELECT * FROM reports ORDER BY id").all() as Record<string, unknown>[];
   }
+
+  labRows(): Record<string, unknown>[] {
+    return this.db.prepare("SELECT * FROM lab_runs ORDER BY created_day, id").all() as Record<string, unknown>[];
+  }
 }
 
 /** `assets` answers env.ASSETS.fetch; by default every asset is missing. */
 export function makeEnv(db = new SqliteD1(), assets: (request: Request) => Promise<Response> = async () => new Response("not found", { status: 404 })) {
   const assetRequests: Request[] = [];
   const env = {
-    // Only prepare/bind/run are used by the Worker; the SQLite stand-in covers exactly that.
+    // Only prepare/bind/run/first are used by the Worker; the SQLite stand-in covers exactly that.
     DB: db as unknown as D1Database,
+    // Cloudflare's always-passing test secret; tests stub fetch to siteverify.
+    TURNSTILE_SECRET_KEY: "1x0000000000000000000000000000000AA",
+    LAB_DAILY_CAP: "1000",
     ASSETS: {
       fetch: async (request: Request) => {
         assetRequests.push(request);

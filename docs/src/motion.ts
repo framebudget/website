@@ -1,4 +1,5 @@
 import { budget } from "framebudget";
+import { allows } from "./force";
 import { reducedMotion } from "./loop";
 import type * as Lib from "./motion-lib";
 
@@ -20,14 +21,14 @@ export const motionNow = (): MotionLib | null => lib;
 
 /** Can this effect animate right now? Allowed, motion loaded, no reduced-motion preference. */
 export function canAnimate(effect: string): MotionLib | null {
-  if (!lib || reducedMotion() || !budget.allows(effect)) return null;
+  if (!lib || reducedMotion() || !allows(effect)) return null;
   return lib;
 }
 
 /** Fetches motion once the browser is idle after load, when any effect that uses it is allowed. */
 export function preloadMotion(): void {
   const go = (): void => {
-    if (reducedMotion() || !USERS.some((e) => budget.allows(e))) return;
+    if (reducedMotion() || !USERS.some((e) => allows(e))) return;
     void loadMotion();
   };
   const idle = window.requestIdleCallback ?? ((cb: () => void) => window.setTimeout(cb, 300));

@@ -1,22 +1,40 @@
 import { budget, type BudgetSnapshot, type ChangeReason } from "framebudget";
+import { forcedEffects, setForced } from "./force";
 import { schedule } from "./loop";
 
 /**
  * One subscription to framebudget for the whole page. A change is read once
  * and every view renders in the same animation frame, so a burst of changes
  * (a slider drag, a governor step during a device change) costs one render.
+ * While the lab forces a set of effects (force.ts), views see that set.
  */
 export type View = (snap: BudgetSnapshot, reasons: readonly ChangeReason[]) => void;
 
+function read(): BudgetSnapshot {
+  const snap = budget.snapshot();
+  const forced = forcedEffects();
+  return forced ? { ...snap, effects: [...forced] } : snap;
+}
+
 const views: View[] = [];
-let current: BudgetSnapshot = budget.snapshot();
+let current: BudgetSnapshot = read();
 let reasons: ChangeReason[] = [];
 
 function flush(): void {
-  current = budget.snapshot();
+  current = read();
   const batch = reasons;
   reasons = [];
   for (const view of views) view(current, batch);
+}
+
+/**
+ * The lab only: runs exactly `effects` on this page whatever framebudget
+ * decided, or returns to its decision with null. Views render in the next
+ * frame; the CSS gate changes at once.
+ */
+export function forceEffects(effects: readonly string[] | null): void {
+  setForced(effects);
+  schedule(flush);
 }
 
 budget.on("change", (_snap, reason) => {

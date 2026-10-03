@@ -3,3 +3,4 @@ dist/
 .vite/
 .wrangler/
 .DS_Store
+.dev.vars

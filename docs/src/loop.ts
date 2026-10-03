@@ -1,4 +1,4 @@
-import { budget } from "framebudget";
+import { reportFrame } from "./force";
 
 /**
  * The page's only requestAnimationFrame loop. Effects add a named task while
@@ -17,6 +17,8 @@ let ticking = false;
 let lastStart = 0;
 /** Another source (the load test) reports these frames instead of "main". */
 let mainReports = true;
+/** The lab's frame probe: the real gap before every frame's work, unclamped. */
+let probe: ((gapMs: number) => void) | null = null;
 
 function tick(now: number): void {
   raf = 0;
@@ -28,7 +30,8 @@ function tick(now: number): void {
   const dt = gap ? Math.min(gap, 250) : 1000 / 60;
   // framebudget's own frame sampler is off (setup.ts): this loop is the only
   // requestAnimationFrame on the page, so it feeds the governor itself.
-  if (gap && mainReports) budget.reportFrame(gap, "main");
+  if (gap && mainReports) reportFrame(gap, "main");
+  if (gap && probe) probe(gap);
   last = now;
   lastStart = start;
   try {
@@ -44,13 +47,13 @@ function tick(now: number): void {
     // Exactly one callback per frame: anything started during this tick
     // waits for the request below instead of adding its own.
     ticking = false;
-    if ((tasks.size || jobs.size) && !document.hidden) raf = requestAnimationFrame(tick);
+    if ((tasks.size || jobs.size || probe) && !document.hidden) raf = requestAnimationFrame(tick);
     else last = 0;
   }
 }
 
 function kick(): void {
-  if (!raf && !ticking && (tasks.size || jobs.size) && !document.hidden) raf = requestAnimationFrame(tick);
+  if (!raf && !ticking && (tasks.size || jobs.size || probe) && !document.hidden) raf = requestAnimationFrame(tick);
 }
 
 export function setTask(name: string, task: Task | null): void {
@@ -61,6 +64,16 @@ export function setTask(name: string, task: Task | null): void {
 
 export function setMainReports(on: boolean): void {
   mainReports = on;
+}
+
+/**
+ * The lab only: calls `fn` once per frame with the real time since the
+ * previous frame, before any job or task runs, and keeps the loop running
+ * until it is removed with null. The first frame after a start has no gap.
+ */
+export function setProbe(fn: ((gapMs: number) => void) | null): void {
+  probe = fn;
+  kick();
 }
 
 /** Runs `job` once in the next frame. The same function scheduled twice runs once. */

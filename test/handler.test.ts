@@ -260,6 +260,10 @@ describe("retention", () => {
     expect(retentionCutoff(Date.UTC(2026, 9, 3, 0, 30))).toBe("2025-08-29");
     const { env, db } = makeEnv();
     await runRetention(env, NOW);
-    expect(db.statements).toEqual([{ sql: "DELETE FROM reports WHERE created_day < ?", params: ["2025-08-29"] }]);
+    expect(db.statements).toEqual([
+      { sql: "DELETE FROM reports WHERE created_day < ?", params: ["2025-08-29"] },
+      { sql: "DELETE FROM lab_runs WHERE created_day < ?", params: ["2025-08-29"] },
+      { sql: "UPDATE lab_runs SET write_key_hash = NULL, open_until = NULL WHERE open_until < ?", params: [Math.floor(NOW / 1000)] },
+    ]);
   });
 });

@@ -12,16 +12,16 @@ const OG_IMAGE_ALT =
   "framebudget: keep the effects, lose the stutter. A 16.7 ms frame budget bar split between your app, a transition, parallax and a canvas.";
 
 /** Pages with a canonical URL, in the sitemap. */
-type IndexedPage = "home" | "api" | "privacy";
+type IndexedPage = "home" | "api" | "privacy" | "lab";
 
 export type SeoPage = IndexedPage | "error";
 
 /**
  * The paths the Worker serves (html_handling: auto-trailing-slash): / for
- * index.html, /api for api.html, /privacy for privacy.html. Canonicals, the
- * sitemap and the site's own links all use them.
+ * index.html, /api for api.html, /privacy for privacy.html, /lab for
+ * lab.html. Canonicals, the sitemap and the site's own links all use them.
  */
-const PATHS: Record<IndexedPage, string> = { home: "/", api: "/api", privacy: "/privacy" };
+const PATHS: Record<IndexedPage, string> = { home: "/", api: "/api", privacy: "/privacy", lab: "/lab" };
 
 /** Links every page carries, error pages included. */
 const SITE_LINKS = `<link rel="alternate" type="text/markdown" href="/llms.txt" title="framebudget for AI agents (llms.txt)">

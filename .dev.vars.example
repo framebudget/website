@@ -1,0 +1,4 @@
+# Copy to .dev.vars (ignored by git) for `npx wrangler dev`.
+# Cloudflare's Turnstile test secret: every token passes. The /lab page uses the matching
+# test sitekey (1x00000000000000000000AA) on localhost and 127.0.0.1.
+TURNSTILE_SECRET_KEY=1x0000000000000000000000000000000AA

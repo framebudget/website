@@ -1,6 +1,7 @@
-import { budget, type BudgetSnapshot } from "framebudget";
+import type { BudgetSnapshot } from "framebudget";
 import { CHART_NOTES } from "./copy";
 import { APP_COLOR, APP_MS, FRAME_MS, SITE_EFFECTS, msAt } from "./effects";
+import { allows, reportFrame } from "./force";
 import { heat, load } from "./load";
 import { reducedMotion, setTask, watchVisibility } from "./loop";
 import { watch } from "./state";
@@ -152,7 +153,7 @@ export function mountChart(): void {
     if (gaps.length > 30) gaps.shift();
     // The chart reports its own frames, so it steps itself down when it stutters.
     // The load test reports separately while it runs.
-    if (!load.on) budget.reportFrame(dt, mode === "hi" ? "canvasHiRes" : "canvasLowRes");
+    if (!load.on) reportFrame(dt, mode === "hi" ? "canvasHiRes" : "canvasLowRes");
     const period = mode === "hi" ? 50 : 120;
     since += dt;
     let added = false;
@@ -172,7 +173,7 @@ export function mountChart(): void {
   }
 
   const pickMode = (): Mode =>
-    reducedMotion() ? "still" : budget.allows("canvasHiRes") ? "hi" : budget.allows("canvasLowRes") ? "low" : "still";
+    reducedMotion() ? "still" : allows("canvasHiRes") ? "hi" : allows("canvasLowRes") ? "low" : "still";
 
   function apply(): void {
     const next = pickMode();
