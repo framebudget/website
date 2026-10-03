@@ -66,14 +66,17 @@ export function mountView(root: HTMLElement): View {
     },
     running(on) {
       intro.hidden = on;
+      // The step progress takes over from the pre-run status, and vice versa.
+      state.textContent = "";
+      progress.textContent = on ? "Getting ready" : "";
       if (!on) return;
-      progress.textContent = "Getting ready";
       window.scrollTo({ top: 0, left: 0, behavior: "instant" });
     },
     progress(text) {
       progress.textContent = text;
     },
     fail(failure) {
+      progress.textContent = "";
       button.hidden = failure === "full";
       button.disabled = false;
       state.textContent = FAILURES[failure];
