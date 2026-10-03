@@ -1,0 +1,7 @@
+{
+  "label": "Website release",
+  "sections": [
+    { "id": "site", "title": "Site", "paths": ["docs/"] },
+    { "id": "worker", "title": "Worker", "paths": ["worker/"] }
+  ]
+}
