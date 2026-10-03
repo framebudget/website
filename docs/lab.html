@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<!-- framebudget:boot -->
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Help calibrate framebudget: the lab</title>
+<meta name="description" content="Run framebudget.dev's effects one at a time on your device and share the frame times, anonymously, to calibrate framebudget's thresholds. About a minute, only when you press the button.">
+<meta name="theme-color" content="#0f1225">
+<!-- fb:seo:lab -->
+<link rel="icon" href="/logo/favicon.svg" type="image/svg+xml">
+<link rel="icon" href="/logo/favicon-32.png" sizes="32x32" type="image/png">
+<link rel="preload" href="/fonts/archivo-var.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="/fonts/martian-mono-var.woff2" as="font" type="font/woff2" crossorigin>
+<script type="module" src="/src/lab/main.ts"></script>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+
+<!-- fb:nav:lab -->
+
+<main id="main" data-lab>
+  <section class="lab-stage" aria-label="Test in progress" hidden data-lab-stage>
+    <div class="shell lab-stage__track" data-lab-track></div>
+    <div class="lab-panel">
+      <div class="shell lab-panel__inner">
+        <div class="lab-panel__side">
+          <p class="lab-panel__status" role="status" data-lab-progress>Getting ready</p>
+          <div class="hero lab-hero" aria-hidden="true">
+            <div class="hero__grid" data-parallax="0.12"></div>
+            <p class="lab-hero__title" data-parallax="-0.06">Keep the effects. Lose the stutter.</p>
+          </div>
+          <div class="install lab-install">
+            <span class="install__prompt" aria-hidden="true">$</span>
+            <code class="install__cmd">npm i framebudget</code>
+          </div>
+          <dl class="readouts lab-readouts" aria-hidden="true">
+            <div><dt>Score</dt><dd><span class="num num--3" data-lab-count>0</span></dd></div>
+            <div><dt>Frames</dt><dd><span class="num num--3" data-lab-count>0</span></dd></div>
+            <div><dt>Late</dt><dd><span class="num num--3" data-lab-count>0</span></dd></div>
+            <div><dt>Effects</dt><dd><span class="num num--3" data-lab-count>0</span></dd></div>
+          </dl>
+        </div>
+        <figure class="chart lab-chart" data-chart aria-labelledby="lab-chart-title">
+          <div class="chart__head">
+            <figcaption class="chart__title" id="lab-chart-title">This page, frame by frame</figcaption>
+            <dl class="readouts readouts--chart">
+              <div><dt>Frame rate</dt><dd><span class="num num--3" data-chart-fps>60</span> fps</dd></div>
+              <div><dt>Late</dt><dd><span class="num num--3" data-chart-late>0</span> of <span class="num num--3" data-chart-total>0</span></dd></div>
+            </dl>
+          </div>
+          <div class="chart__plot">
+            <canvas class="chart__canvas" role="img" aria-label="Live chart of this page's frames against the 16.7 ms deadline." data-chart-canvas></canvas>
+            <span class="chart__deadline" aria-hidden="true"><span>16.7 ms</span></span>
+          </div>
+          <p class="chart__note"><!-- fb:reserve:chart-note Each bar is one frame: the page's own work, then every effect framebudget allowed. The outline is the same frame with every effect on. --></p>
+        </figure>
+      </div>
+    </div>
+  </section>
+
+  <div class="shell docs" data-lab-intro>
+    <header class="docs__head">
+      <h1 class="page-title" data-reveal="blur"><span class="w" style="--i:0">Help</span> <span class="w" style="--i:1">calibrate</span></h1>
+      <p class="docs__lede">framebudget turns effects on when a device has time for them. The thresholds behind that come from a handful of phones. This page runs the site's own effects one at a time on your device and measures every frame, so the thresholds can come from real devices instead.</p>
+      <div class="docs__live panel lab-consent">
+        <p class="panel__label">Run the test on this device</p>
+        <p class="lab-consent__text">About a minute. The page scrolls by itself; keep this tab visible until the results appear. On a phone in battery saver, plug it in first. Nothing is measured or sent before you press the button.</p>
+        <div class="lab-turnstile" hidden data-lab-turnstile></div>
+        <p><button class="button button--primary press" type="button" data-lab-start data-cuelume-tap>Run the test and share the results</button></p>
+        <p class="lab-consent__state" role="status" data-lab-state></p>
+      </div>
+    </header>
+
+    <div class="docs__body">
+      <nav class="toc" aria-label="On this page">
+        <p class="toc__title">On this page</p>
+        <ul>
+          <li><a href="#what">What the test does</a></li>
+          <li><a href="#collected">What is collected</a></li>
+          <li><a href="#not-collected">What is not</a></li>
+          <li><a href="#retention">Storage and retention</a></li>
+        </ul>
+      </nav>
+
+      <div class="docs__content">
+        <section id="results" aria-labelledby="results-title" hidden data-lab-results>
+          <h2 id="results-title">Your results</h2>
+          <p>Frame times on this device, at a refresh rate of <strong data-lab-refresh>60 Hz</strong>. A late frame took longer than one and a half refresh intervals. Each effect ran alone, on the same page, with the same scroll.</p>
+          <table class="table lab-results">
+            <thead><tr><th scope="col">Step</th><th scope="col">Median frame</th><th scope="col">95th percentile</th><th scope="col">Late frames</th></tr></thead>
+            <tbody data-lab-rows></tbody>
+          </table>
+        </section>
+
+        <section id="what" aria-labelledby="what-title">
+          <h2 id="what-title">What the test does</h2>
+          <ul class="docs__list">
+            <li>Cloudflare Turnstile checks that a browser, not a script, pressed the button. It runs only then.</li>
+            <li>The page waits for framebudget's benchmark, then measures the screen's refresh rate for a second.</li>
+            <li>It runs the page with no effects, then with each effect alone, then with all of them, then with none again. Each step lasts about five seconds while the page scrolls by itself, and every frame's duration is measured.</li>
+            <li>Every effect runs on every device, whatever framebudget would choose for it. Effects that need your pointer, a press or a navigation (hover states, sounds, morphing controls, page transitions, spring presses, magnetic buttons and the cursor spotlight) are not measured.</li>
+            <li>Each step is sent as soon as it ends, before the next one starts. If the tab is hidden during a step, that step runs again once; if it is hidden again, the test stops.</li>
+            <li>With reduced motion on, the moving effects stay still and the test measures that. It runs, as always, only when you press the button.</li>
+          </ul>
+        </section>
+
+        <section id="collected" aria-labelledby="collected-title">
+          <h2 id="collected-title">What is collected</h2>
+          <p>One record per test, with only these numbers and names:</p>
+          <table class="table">
+            <thead><tr><th scope="col">Field</th><th scope="col">What it is</th></tr></thead>
+            <tbody>
+              <tr><th scope="row">Versions</th><td>The framebudget version this site runs and the calibration version its scores use.</td></tr>
+              <tr><th scope="row">Scores</th><td>The device score (100 is the reference phone) and the cold and warm benchmark scores, to one decimal.</td></tr>
+              <tr><th scope="row">Kernel rates</th><td>How much work each of the four benchmark kernels did per millisecond, to 3 significant digits.</td></tr>
+              <tr><th scope="row">Clock resolution</th><td>The precision of the page's timer, to 2 significant digits.</td></tr>
+              <tr><th scope="row">Hardware hints</th><td>The number of logical cores and the rounded memory size the browser reports.</td></tr>
+              <tr><th scope="row">Screen</th><td>The measured refresh rate in whole hertz, the pixel ratio to one decimal, and the window width rounded to 100 pixels.</td></tr>
+              <tr><th scope="row">Preferences</th><td>Whether reduced motion and Save-Data are on.</td></tr>
+              <tr><th scope="row">Steps</th><td>For each step: its name, the effects that ran, the number of frames, the duration, the median, 95th percentile and longest frame time, and how many frames were late.</td></tr>
+            </tbody>
+          </table>
+          <p>The server adds the browser engine and its major version, the operating system family, mobile or desktop, the country Cloudflare assigns to the request, and the day in UTC, then discards the request headers.</p>
+        </section>
+
+        <section id="not-collected" aria-labelledby="not-collected-title">
+          <h2 id="not-collected-title">What is not collected</h2>
+          <ul class="docs__list">
+            <li>No IP address and no user agent string.</li>
+            <li>No cookies, no identifiers, no fingerprint, no time of day.</li>
+            <li>The test's id is random. It exists only in this page's memory and in the record, never on your device, and it stops working when the test ends.</li>
+            <li>When the test is done, this browser keeps a note with the calibration version and the day, without any id, so the button does not come back for the same calibration.</li>
+          </ul>
+        </section>
+
+        <section id="retention" aria-labelledby="retention-title">
+          <h2 id="retention-title">Storage and retention</h2>
+          <p>Records are stored in a Cloudflare D1 database behind this site and deleted after 400 days. The server accepts a limited number of tests per day. Only aggregated numbers are ever published. The details are on the <a href="/privacy#lab">privacy page</a>.</p>
+        </section>
+      </div>
+    </div>
+  </div>
+</main>
+
+<!-- fb:footer -->
+<!-- fb:dock -->
+<!-- fb:share-note -->
+</body>
+</html>

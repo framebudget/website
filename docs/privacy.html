@@ -39,6 +39,7 @@
         <li><a href="#when">When it is sent</a></li>
         <li><a href="#retention">Storage and retention</a></li>
         <li><a href="#local">On your device</a></li>
+        <li><a href="#lab">The lab</a></li>
         <li><a href="#contact">Contact</a></li>
       </ul>
     </nav>
@@ -102,6 +103,19 @@
       <section id="local" aria-labelledby="local-title">
         <h2 id="local-title">On your device</h2>
         <p>framebudget keeps one <code>localStorage</code> entry per site with the cached score and the effects that stuttered, so the next visit starts with the right effects. The site also remembers your sound and sharing choices. None of this leaves your device.</p>
+      </section>
+
+      <section id="lab" aria-labelledby="lab-title">
+        <h2 id="lab-title">The lab</h2>
+        <p>The <a href="/lab">lab</a> is a separate, opt-in test. Nothing in it runs until you press <strong>Run the test and share the results</strong> on that page. It then runs the site's effects one at a time on your device for about a minute and sends one record to <code>/api/lab/runs</code> on this site:</p>
+        <ul class="docs__list">
+          <li><strong>Device:</strong> the framebudget and calibration versions, the device score and the cold and warm benchmark scores (one decimal), the kernel rates (3 significant digits), the clock resolution, the number of logical cores and the rounded memory size, the measured refresh rate, the pixel ratio (one decimal), the window width rounded to 100 pixels, and whether reduced motion and Save-Data are on.</li>
+          <li><strong>Steps:</strong> for each step, its name, the effects that ran, the number of frames, the duration, the median, 95th percentile and longest frame time, and how many frames were later than one and a half refresh intervals. Each step is added to the same record as soon as it ends.</li>
+          <li><strong>From the request:</strong> the browser engine and its major version, the operating system family, mobile or desktop, the country code Cloudflare assigns, and the day in UTC, like the reports above. The IP address and the user agent string are not stored.</li>
+        </ul>
+        <p>Cloudflare Turnstile, a check by Cloudflare that a browser and not a script pressed the button, runs when you press the button, and only on the lab page. Its script comes from <code>challenges.cloudflare.com</code> and is subject to <a href="https://www.cloudflare.com/privacypolicy/">Cloudflare's privacy policy</a>; this site only receives its pass or fail answer.</p>
+        <p>Each test gets a random id and a random write key from the server. Both live only in the page's memory and in the record, never in your browser's storage, and the key stops working when the test ends or after 15 minutes. It is erased from the record when the test ends, or by the next daily cleanup. When the test is done, the browser keeps <code>framebudget-lab</code> in <code>localStorage</code> with the calibration version and the day, and no id, so the lab does not offer the test again for the same calibration.</p>
+        <p>Lab records are kept in the same database and deleted after 400 days. The server accepts a limited number of new tests per day, and stops accepting more until the next day once it is reached.</p>
       </section>
 
       <section id="contact" aria-labelledby="contact-title">
