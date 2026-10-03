@@ -4,6 +4,18 @@ Every release of the framebudget website (framebudget.dev), newest first, split 
 
 Website versions are independent of the library's. Until 2026-10-03 the website shipped with the library, from one repository; that history is in the [framebudget CHANGELOG](https://github.com/framebudget/core/blob/main/CHANGELOG.md), up to and including 0.2.1.
 
+## [1.1.1] - 2026-10-03
+
+### Site
+
+#### Fixes
+
+- **docs:** make the lab page work on phones ([3b6dddf](https://github.com/framebudget/website/commit/3b6dddf4fed07a60b8bc84824885393b35811978)) ([#5](https://github.com/framebudget/website/pull/5))
+
+### Worker
+
+No changes.
+
 ## [1.1.0] - 2026-10-03
 
 ### Site
