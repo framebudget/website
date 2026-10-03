@@ -15,8 +15,7 @@
         "package.json",
         "package-lock.json",
         "tsconfig.json",
-        "vitest.config.ts",
-        ".npmrc"
+        "vitest.config.ts"
       ]
     }
   ]

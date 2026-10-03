@@ -6,8 +6,8 @@
 #   worker    typecheck and tests of the Cloudflare Worker (the repository root)
 #   gate      one required check: fails when a job that ran failed, passes when the rest skipped
 #
-# Both projects install the library from GitHub Packages, which needs a token
-# with packages: read even for public packages.
+# Both projects install the library from the framebudget/core release tarball
+# that their lockfiles pin by integrity; no registry token is needed.
 name: CI
 
 on:
@@ -46,7 +46,7 @@ jobs:
           # A change to this workflow runs everything, so the gates themselves get tested.
           ci='^\.github/workflows/ci\.yml$'
           # The Worker is the root project; release.config.json lists the same paths.
-          worker='^(src/|test/|migrations/|scripts/|(wrangler\.jsonc|calibration\.json|package(-lock)?\.json|tsconfig\.json|vitest\.config\.ts|\.npmrc)$)'
+          worker='^(src/|test/|migrations/|scripts/|(wrangler\.jsonc|calibration\.json|package(-lock)?\.json|tsconfig\.json|vitest\.config\.ts)$)'
           {
             echo "site=$(matches "^docs/|$ci")"
             echo "worker=$(matches "$worker|$ci")"
@@ -59,7 +59,6 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      packages: read
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -67,11 +66,7 @@ jobs:
           node-version: 22
           cache: npm
           cache-dependency-path: docs/package-lock.json
-          registry-url: https://npm.pkg.github.com
-          scope: "@framebudget"
       - run: npm ci --prefix docs
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - run: npm run build --prefix docs
 
   worker:
@@ -81,7 +76,6 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      packages: read
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -89,11 +83,7 @@ jobs:
           node-version: 22
           cache: npm
           cache-dependency-path: package-lock.json
-          registry-url: https://npm.pkg.github.com
-          scope: "@framebudget"
       - run: npm ci
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - run: npm run typecheck
       - run: npm test
 

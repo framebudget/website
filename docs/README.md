@@ -4,7 +4,7 @@ The landing page and API reference for framebudget. The page is also a demo of t
 
 ## Commands
 
-Run these in `docs/`. The site depends on the published library: `framebudget` in `package.json` is `npm:@framebudget/framebudget@0.2.1` from GitHub Packages (`.npmrc` maps the `@framebudget` scope to `https://npm.pkg.github.com`), so installing needs a GitHub token with `read:packages`; see the repository `README.md`. The library's source is [github.com/framebudget/core](https://github.com/framebudget/core).
+Run these in `docs/`. The site depends on the published library: `framebudget` in `package.json` is the 0.2.1 release tarball of framebudget/core, pinned by integrity in `package-lock.json` (see the repository `README.md`). The library's source is [github.com/framebudget/core](https://github.com/framebudget/core).
 
 | Command | What it does |
 | --- | --- |

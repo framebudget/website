@@ -145,7 +145,6 @@ jobs:
     environment: production
     permissions:
       contents: read
-      packages: read
       id-token: write
       attestations: write
     env:
@@ -160,21 +159,15 @@ jobs:
           cache-dependency-path: |
             package-lock.json
             docs/package-lock.json
-          registry-url: https://npm.pkg.github.com
-          scope: "@framebudget"
-      # The library comes from GitHub Packages, which needs a token even for public packages.
-      # The Worker is the root project; the site is docs/.
+      # The Worker is the root project; the site is docs/. The library comes from the
+      # core release tarball the lockfiles pin by integrity.
       - name: Install
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           npm ci
           npm ci --prefix docs
       # Registry signatures of every installed dependency, and no known high
       # severity advisory in what the site and the Worker ship with.
       - name: Audit
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           for dir in . docs; do
             (cd "$dir" && npm audit signatures && npm audit --omit=dev --audit-level=high)

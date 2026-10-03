@@ -11,18 +11,18 @@ Related repositories: the library is [github.com/framebudget/core](https://githu
 
 ## The library as a dependency
 
-The site and the Worker's tests use the published library, never its source: `docs/package.json` (dependency) and the root `package.json` (devDependency) pin `"framebudget": "npm:@framebudget/framebudget@0.2.1"`, today's full package, served by GitHub Packages. `docs/.npmrc` and the root `.npmrc` map the `@framebudget` scope to `https://npm.pkg.github.com`. The package's `README.md` becomes `llms-full.txt`, and the Worker's calibration script reads `defaultCalibration` from it.
+The site and the Worker's tests use the published library, never its source. Until the library is on npmjs, `docs/package.json` (dependency) and the root `package.json` (devDependency) install it from a release asset of [framebudget/core](https://github.com/framebudget/core/releases): `"framebudget": "https://github.com/framebudget/core/releases/download/v0.2.1/framebudget-framebudget-0.2.1.tgz"`, today's full package. Release assets are immutable and public, so no registry or token is involved, and both lockfiles pin the tarball's integrity. Check the tarball against the core release attestation with:
 
-To move to a new library release, change the version in both `package.json` files, run `npm install` at the root and in `docs/`, and commit both lockfiles.
+```sh
+gh release download v0.2.1 --repo framebudget/core --pattern 'framebudget-framebudget-0.2.1.tgz'
+gh release verify-asset v0.2.1 framebudget-framebudget-0.2.1.tgz --repo framebudget/core
+```
+
+The package's `README.md` becomes `llms-full.txt`, and the Worker's calibration script reads `defaultCalibration` from it. To move to a new library release, change the URL in both `package.json` files, run `npm install` at the root and in `docs/`, and commit both lockfiles.
 
 ## Local development
 
-Node 22. GitHub Packages needs a token even for public packages. Keep it out of your `~/.npmrc` with a throwaway user config (the GitHub CLI token works when it has `read:packages`; add it with `gh auth refresh --scopes read:packages`):
-
-```sh
-export NPM_CONFIG_USERCONFIG=$(mktemp)
-printf '//npm.pkg.github.com/:_authToken=%s\n' "$(gh auth token)" > "$NPM_CONFIG_USERCONFIG"
-```
+Node 22. No npm login or token is needed.
 
 Site (`docs/`, details in [`docs/README.md`](docs/README.md)):
 
@@ -186,7 +186,7 @@ The cron trigger (`17 3 * * *`, daily) runs `DELETE FROM reports WHERE created_d
 
 ## Pull requests
 
-`.github/workflows/ci.yml` runs on pull requests that are ready for review (drafts skip every job; marking one ready starts the run). A change under `docs/` runs the Site job (install and build), a change to the Worker's paths at the root (`src/`, `test/`, `migrations/`, `scripts/`, `wrangler.jsonc`, `calibration.json`, `package.json`, `package-lock.json`, `tsconfig.json`, `vitest.config.ts`, `.npmrc`) runs the Worker job (install, typecheck, tests), and a change to `ci.yml` runs both. The `CI` job is the one required check: it fails when any job failed and passes when the others were skipped.
+`.github/workflows/ci.yml` runs on pull requests that are ready for review (drafts skip every job; marking one ready starts the run). A change under `docs/` runs the Site job (install and build), a change to the Worker's paths at the root (`src/`, `test/`, `migrations/`, `scripts/`, `wrangler.jsonc`, `calibration.json`, `package.json`, `package-lock.json`, `tsconfig.json`, `vitest.config.ts`) runs the Worker job (install, typecheck, tests), and a change to `ci.yml` runs both. The `CI` job is the one required check: it fails when any job failed and passes when the others were skipped.
 
 ## Releases and deploys
 
