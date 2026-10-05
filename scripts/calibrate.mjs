@@ -13,16 +13,19 @@
  * `defaultCalibration` from the installed `framebudget` package (`npm ci` at the
  * repository root), for the current reference rates. The threshold search and the
  * auto calibration come from src/calibration/ (TypeScript, run with Node's type
- * stripping), the same code the Worker's daily cron runs. Accepts the wrangler JSON
+ * stripping), the same code the Worker's daily cron runs, and its run selection is
+ * the cron's SQL, run over the export in an in-memory node:sqlite. Accepts the wrangler JSON
  * export (an array of `{ results: [...] }`), a plain JSON array of rows, or a CSV
  * export with a header row.
  */
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
+import { DatabaseSync } from "node:sqlite";
 import { pathToFileURL } from "node:url";
 import { defaultCalibration } from "framebudget";
 import { evaluate } from "../src/calibration/evaluate.ts";
 import { stateFromLog } from "../src/calibration/log.ts";
 import { parseAutoPatch } from "../src/calibration/patch.ts";
+import { MAX_RUNS, readCalibrationInput } from "../src/calibration/runs.ts";
 import { labTargetMs, lowestThreshold, MAX_UNDER, MIN_DEVICES, TARGET_FPS } from "../src/calibration/search.ts";
 
 export { labTargetMs, lowestThreshold };
@@ -343,6 +346,24 @@ export function readCurrent(text) {
   return { state: { patch: parseAutoPatch(rows[0] ?? null), lastChanged: {} }, cadence: false };
 }
 
+/**
+ * The export's lab runs in an in-memory SQLite built from the Worker's migrations,
+ * behind the part of the D1 API readCalibrationInput uses, so the cron's own SQL
+ * picks the runs, applies the exclusions and unnests the steps.
+ */
+export function labDatabase(rows) {
+  const db = new DatabaseSync(":memory:");
+  const dir = new URL("../migrations/", import.meta.url);
+  for (const file of readdirSync(dir).filter((f) => f.endsWith(".sql")).sort()) db.exec(readFileSync(new URL(file, dir), "utf8"));
+  const columns = new Set(db.prepare("SELECT name FROM pragma_table_info('lab_runs')").all().map((c) => c.name));
+  rows.forEach((row, i) => {
+    const entries = Object.entries({ id: `export-${i}`, ...row }).filter(([name]) => columns.has(name));
+    const values = entries.map(([, v]) => (v === null || typeof v === "number" || typeof v === "string" ? v : JSON.stringify(v)));
+    db.prepare(`INSERT INTO lab_runs (${entries.map(([name]) => name).join(", ")}) VALUES (${entries.map(() => "?").join(", ")})`).run(...values);
+  });
+  return { prepare: (sql) => ({ bind: (...params) => ({ all: async () => ({ results: db.prepare(sql).all(...params) }) }) }) };
+}
+
 function parseArgs(argv) {
   const options = { percentile: 50, targetFps: 55, maxUnder: 0.05, minSamples: 10, cal: undefined, reference: undefined };
   let file;
@@ -479,7 +500,7 @@ function printAuto(evaluation, current) {
   out.push(`within ${labTargetMs(TARGET_FPS, 60).toFixed(2)} ms at 60 Hz scaled by refresh rate, under ${MAX_UNDER * 100}% of devices over it, at least ${MIN_DEVICES} devices;`);
   out.push("--target-fps, --max-under, --min-samples and --cal do not apply here).");
   out.push(
-    `Runs: ${evaluation.runs} counted, ${evaluation.excluded} excluded (refresh rate ${x.refresh}, no baseline ${x.baseline}, busy baseline ${x.busy}, thermal ${x.thermal}), cal ${evaluation.cal ?? "-"}.`,
+    `Runs: ${evaluation.runs} counted (the most recent ${MAX_RUNS} at most), ${evaluation.excluded} excluded (refresh rate ${x.refresh}, no baseline ${x.baseline}, busy baseline ${x.busy}, thermal ${x.thermal}), cal ${evaluation.cal ?? "-"}.`,
   );
   out.push(
     current.file === undefined
@@ -498,7 +519,7 @@ function printAuto(evaluation, current) {
   return out.join("\n");
 }
 
-function main() {
+async function main() {
   let parsed;
   try {
     parsed = parseArgs(process.argv.slice(2));
@@ -528,9 +549,11 @@ function main() {
     sections.push(printLab(analyzeLab(rows, options), options));
     sections.push(printLabWork(analyzeLabWork(rows, options, currentMs), options));
     const current = options.current === undefined ? { state: stateFromLog([]), cadence: false } : readCurrent(readFileSync(options.current, "utf8"));
-    sections.push(printAuto(evaluate(rows, registry, current.state, Date.now()), { file: options.current, cadence: current.cadence }));
+    const now = Date.now();
+    const input = await readCalibrationInput(labDatabase(rows), now, Object.keys(registry.effects));
+    sections.push(printAuto(evaluate(input, registry, current.state, now), { file: options.current, cadence: current.cadence }));
   }
   console.log(sections.join("\n\n"));
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) main();
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) await main();

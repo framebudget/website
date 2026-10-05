@@ -58,14 +58,14 @@ describe("daily auto calibration", () => {
     await cron(env);
     expect(db.logRows()).toEqual([]);
     expect(db.statements.some((s) => s.sql.includes("calibration_log") && !s.sql.startsWith("DELETE"))).toBe(false);
-    expect(db.statements.some((s) => s.sql.startsWith("SELECT"))).toBe(false);
+    expect(db.statements.some((s) => /^(SELECT|WITH)/.test(s.sql))).toBe(false);
   });
 
   it("never stops retention with an error", async () => {
     const db = new SqliteD1();
     const prepare = db.prepare.bind(db);
     db.prepare = (sql: string) => {
-      if (sql.includes("FROM lab_runs\nWHERE completed")) throw new Error("D1 down");
+      if (sql.startsWith("WITH eligible")) throw new Error("D1 down");
       return prepare(sql);
     };
     const { env } = makeEnv(db);

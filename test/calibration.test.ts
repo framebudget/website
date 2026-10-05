@@ -4,9 +4,10 @@ import { evaluate } from "../src/calibration/evaluate.ts";
 import { CADENCE_SECONDS, guard, tierRange, type GuardInput } from "../src/calibration/guardrails.ts";
 import { stateFromLog } from "../src/calibration/log.ts";
 import { deepMerge, parseAutoPatch } from "../src/calibration/patch.ts";
-import { selectRuns } from "../src/calibration/runs.ts";
+import { MAX_RUNS, readCalibrationInput } from "../src/calibration/runs.ts";
 import { labTargetMs, lowestThreshold } from "../src/calibration/search.ts";
-import { fixtureRows, labRow, type RunSpec } from "./lab-rows";
+import { SqliteD1 } from "./helpers";
+import { fixtureRows, insertLabRows, labRow, type LabRowValues, type RunSpec } from "./lab-rows";
 
 const NOW = Date.UTC(2026, 9, 4, 3, 17);
 const NOW_SEC = NOW / 1000;
@@ -15,58 +16,79 @@ const FLOORS = Object.values(registry.tiers);
 const EMPTY = { patch: { effects: {} }, lastChanged: {} };
 const rows = (specs: RunSpec[]) => specs.map(labRow);
 
-describe("run selection", () => {
-  it("counts clean runs and excludes each kind of bad run", () => {
-    const selection = selectRuns(
-      rows([
-        { score: 50 },
-        { score: 51, baseline: null },
-        { score: 52, end: null },
-        // 1.5 refresh intervals: 25 ms at 60 Hz, 12.5 ms at 120 Hz.
-        { score: 53, baseline: 25.1 },
-        { score: 54, hz: 120, baseline: 12.6 },
-        { score: 55, hz: 120, baseline: 12.4, end: 12.4 },
-        // baseline-end more than 25% above the baseline.
-        { score: 56, baseline: 16, end: 20.1 },
-        { score: 57, baseline: 16, end: 20 },
-        { score: 58, hz: 29 },
-        { score: 59, hz: 361 },
-        { score: 60, hz: 30 },
-        { score: 61, hz: 360, baseline: 4, end: 4 },
-      ]),
-      NOW,
-    );
-    expect(selection.runs.map((r) => r.score)).toEqual([50, 55, 57, 60, 61]);
-    expect(selection.exclusions).toEqual({ refresh: 2, baseline: 2, busy: 2, thermal: 1 });
-    expect(selection.excluded).toBe(7);
+/** The cron's input for these lab rows: the real SQL over in-memory SQLite with the real migrations. */
+async function inputOf(labRows: LabRowValues[], nowMs = NOW) {
+  const db = new SqliteD1();
+  insertLabRows(db.db, labRows);
+  return readCalibrationInput(db as unknown as D1Database, nowMs, Object.keys(registry.effects));
+}
+
+/** Scores of the runs whose steps the evaluation receives, ascending. */
+const countedScores = async (specs: RunSpec[]) =>
+  [...new Set((await inputOf(rows(specs.map((s) => ({ effects: { blur: 10 }, ...s }))))).steps.map((s) => s.score))].sort((a, b) => a - b);
+
+describe("run selection (SQL)", () => {
+  const BAD_RUNS: RunSpec[] = [
+    { score: 50 },
+    { score: 51, baseline: null },
+    { score: 52, end: null },
+    // 1.5 refresh intervals: 25 ms at 60 Hz, 12.5 ms at 120 Hz.
+    { score: 53, baseline: 25.1 },
+    { score: 54, hz: 120, baseline: 12.6 },
+    { score: 55, hz: 120, baseline: 12.4, end: 12.4 },
+    // baseline-end more than 25% above the baseline.
+    { score: 56, baseline: 16, end: 20.1 },
+    { score: 57, baseline: 16, end: 20 },
+    { score: 58, hz: 29 },
+    { score: 59, hz: 361 },
+    { score: 60, hz: 30 },
+    { score: 61, hz: 360, baseline: 4, end: 4 },
+  ];
+
+  it("counts clean runs and excludes each kind of bad run", async () => {
+    expect(await countedScores(BAD_RUNS)).toEqual([50, 55, 57, 60, 61]);
+    const input = await inputOf(rows(BAD_RUNS.map((s) => ({ effects: { blur: 10 }, ...s }))));
+    expect(input).toMatchObject({ cal: "provisional-1", runs: 5, excluded: 7, exclusions: { refresh: 2, baseline: 2, busy: 2, thermal: 1 } });
   });
 
-  it("ignores protocol 1, other calibration versions, unfinished and old runs without counting them as excluded", () => {
-    const selection = selectRuns(
-      rows([
-        { score: 50 },
-        { score: 51 },
-        { score: 52, protocol: 1 },
-        { score: 53, protocol: 3 },
-        { score: 54, cal: "provisional-0" },
-        { score: 55, completed: 0 },
-        { score: 56, day: "2025-08-30" },
-        { score: 57, day: "2025-08-29", baseline: null },
-      ]),
-      NOW,
-    );
-    expect(selection).toMatchObject({ cal: "provisional-1", excluded: 0 });
-    expect(selection.runs.map((r) => r.score)).toEqual([50, 51, 53, 56]);
+  it("ignores protocol 1, other calibration versions, unfinished and old runs without counting them as excluded", async () => {
+    const specs: RunSpec[] = [
+      { score: 50 },
+      { score: 51 },
+      { score: 52, protocol: 1 },
+      { score: 53, protocol: 3 },
+      { score: 54, cal: "provisional-0" },
+      { score: 55, completed: 0 },
+      { score: 56, day: "2025-08-30" },
+      { score: 57, day: "2025-08-29", baseline: null },
+    ];
+    expect(await countedScores(specs)).toEqual([50, 51, 53, 56]);
+    expect(await inputOf(rows(specs))).toMatchObject({ cal: "provisional-1", runs: 4, excluded: 0 });
   });
 
-  it("uses the most common calibration version among the protocol 2 runs", () => {
-    const selection = selectRuns(
-      rows([{ score: 1, cal: "a" }, { score: 2, cal: "b" }, { score: 3, cal: "b" }, { score: 4, cal: "a", protocol: 1 }, { score: 5, cal: "a", protocol: 1 }]),
-      NOW,
-    );
-    expect(selection.cal).toBe("b");
-    expect(selection.runs.map((r) => r.score)).toEqual([2, 3]);
-    expect(selectRuns([], NOW)).toMatchObject({ cal: null, runs: [], excluded: 0 });
+  it("uses the most common calibration version among the protocol 2 runs", async () => {
+    const specs: RunSpec[] = [{ score: 1, cal: "a" }, { score: 2, cal: "b" }, { score: 3, cal: "b" }, { score: 4, cal: "a", protocol: 1 }, { score: 5, cal: "a", protocol: 1 }];
+    expect(await countedScores(specs)).toEqual([2, 3]);
+    expect((await inputOf(rows(specs))).cal).toBe("b");
+    expect(await inputOf([])).toEqual({ cal: null, runs: 0, excluded: 0, exclusions: { refresh: 0, baseline: 0, busy: 0, thermal: 0 }, steps: [] });
+  });
+
+  it("sends only the registry's effect steps with a numeric p95, as compact rows", async () => {
+    const row = labRow({ score: 50, effects: { blur: 12, notAnEffect: 30, all: 30 } }, 0);
+    const steps = JSON.parse(String(row.steps));
+    steps.push({ name: "parallax", p95Ms: "slow" });
+    const input = await inputOf([{ ...row, steps: JSON.stringify(steps) }]);
+    expect(input.steps).toEqual([{ run: 1, score: 50, refresh_hz: 60, name: "blur", p95: 12 }]);
+  });
+
+  it(`uses the ${MAX_RUNS} most recent counted runs`, async () => {
+    const day = (n: number) => new Date(NOW - n * DAY * 1000).toISOString().slice(0, 10);
+    // Ten runs a day, newest first: the last three, on the oldest day, fall outside the window of runs.
+    const specs = Array.from({ length: MAX_RUNS + 3 }, (_, i): RunSpec => ({ score: i < MAX_RUNS ? 50 : 1, day: day(Math.floor(i / 10)), effects: { blur: 10 } }));
+    const input = await inputOf(rows(specs));
+    expect(input.runs).toBe(MAX_RUNS);
+    expect(input.steps).toHaveLength(MAX_RUNS);
+    expect(input.steps.some((s) => s.score === 1)).toBe(false);
   });
 });
 
@@ -90,17 +112,17 @@ describe("threshold search", () => {
     expect(lowestThreshold([...samples(15), { score: 1000, missed: true }], 0.05, 10)).toBeNull();
   });
 
-  it("scales the target by the refresh rate", () => {
+  it("scales the target by the refresh rate", async () => {
     expect(labTargetMs(55, 60)).toBeCloseTo(1000 / 55, 9);
     expect(labTargetMs(55, 120)).toBeCloseTo(500 / 55, 9);
     // p95 12 ms with the effect on: within the target at 60 Hz, over it at 120 Hz.
     const lab = (hz: number) => rows(Array.from({ length: 12 }, (_, i) => ({ score: 40 + i * 5, hz, baseline: 8, end: 8, effects: { blur: i < 2 ? 12 : 8 } })));
-    const proposed = (hz: number) => evaluate(lab(hz), registry, EMPTY, NOW).changes[0]!.proposed;
-    expect(proposed(60)).toBe(40);
+    const proposed = async (hz: number) => evaluate(await inputOf(lab(hz)), registry, EMPTY, NOW).changes[0]!.proposed;
+    expect(await proposed(60)).toBe(40);
     // At 120 Hz the two slowest miss: 2 of 12 and 1 of 11 are over 5%, 0 of 10 is not.
-    expect(proposed(120)).toBe(50);
+    expect(await proposed(120)).toBe(50);
     const mixed = rows(Array.from({ length: 14 }, (_, i) => ({ score: 40 + i * 5, hz: i < 2 ? 120 : 60, baseline: 8, end: 8, effects: { blur: 12 } })));
-    expect(evaluate(mixed, registry, EMPTY, NOW).changes[0]).toMatchObject({ proposed: 50, devices: 14 });
+    expect(evaluate(await inputOf(mixed), registry, EMPTY, NOW).changes[0]).toMatchObject({ proposed: 50, devices: 14 });
   });
 });
 
@@ -181,10 +203,10 @@ describe("guardrails", () => {
 });
 
 describe("evaluation", () => {
-  const fixture = () => fixtureRows("2026-10-04");
+  const fixture = (count?: number) => inputOf(fixtureRows("2026-10-04").slice(0, count));
 
-  it("proposes and limits every measured effect of the registry", () => {
-    const result = evaluate(fixture(), registry, EMPTY, NOW);
+  it("proposes and limits every measured effect of the registry", async () => {
+    const result = evaluate(await fixture(), registry, EMPTY, NOW);
     expect(result).toMatchObject({ cal: "provisional-1", runs: 24, excluded: 4, exclusions: { refresh: 1, baseline: 1, busy: 1, thermal: 1 }, applied: true });
     expect(result.changes).toEqual([
       { effect: "counters", from: 12, to: 10, proposed: 10, devices: 24, limitedBy: null },
@@ -198,8 +220,8 @@ describe("evaluation", () => {
     ]);
   });
 
-  it("changes only effect thresholds", () => {
-    const { patch } = evaluate(fixture(), registry, EMPTY, NOW);
+  it("changes only effect thresholds", async () => {
+    const { patch } = evaluate(await fixture(), registry, EMPTY, NOW);
     expect(patch).toEqual({
       effects: { counters: { threshold: 10 }, entrances: { threshold: 20.1 }, canvasLowRes: { threshold: 34 }, shimmer: { threshold: 42 }, parallax: { threshold: 72 }, blur: { threshold: 108 }, canvasHiRes: { threshold: 144 } },
     });
@@ -207,9 +229,9 @@ describe("evaluation", () => {
     for (const effect of Object.values(patch.effects)) expect(Object.keys(effect)).toEqual(["threshold"]);
   });
 
-  it("steps from the patch in force, keeps its other effects and honors the cadence", () => {
+  it("steps from the patch in force, keeps its other effects and honors the cadence", async () => {
     const state = { patch: { effects: { blur: { threshold: 120 }, hover: { threshold: 9 }, gone: { threshold: 5 } } }, lastChanged: { canvasHiRes: NOW_SEC - DAY } };
-    const result = evaluate(fixture(), registry, state, NOW);
+    const result = evaluate(await fixture(), registry, state, NOW);
     expect(result.changes.find((c) => c.effect === "blur")).toMatchObject({ from: 120, to: 96, limitedBy: "step" });
     expect(result.changes.find((c) => c.effect === "canvasHiRes")).toMatchObject({ from: 180, to: 180, limitedBy: "cadence" });
     expect(result.patch.effects).toMatchObject({ blur: { threshold: 96 }, hover: { threshold: 9 } });
@@ -217,20 +239,21 @@ describe("evaluation", () => {
     expect(result.patch.effects).not.toHaveProperty("canvasHiRes");
   });
 
-  it("applies nothing and keeps the patch in force when no effect has enough devices", () => {
+  it("applies nothing and keeps the patch in force when no effect has enough devices", async () => {
     const state = { patch: { effects: { blur: { threshold: 120 } } }, lastChanged: {} };
-    const result = evaluate(fixture().slice(0, 9), registry, state, NOW);
+    const result = evaluate(await fixture(9), registry, state, NOW);
     expect(result.applied).toBe(false);
     expect(result.changes.every((c) => c.proposed === null && c.limitedBy === "devices" && c.to === c.from)).toBe(true);
     expect(result.patch).toEqual(state.patch);
   });
 
-  it("converges over days without crossing the hard limits", () => {
+  it("converges over days without crossing the hard limits", async () => {
+    const input = await fixture();
     let state = stateFromLog([]);
     const log: Record<string, unknown>[] = [];
     for (let day = 0; day < 60; day++) {
       const now = NOW + day * DAY * 1000;
-      const result = evaluate(fixture(), registry, state, now);
+      const result = evaluate(input, registry, state, now);
       log.push({ id: day + 1, created_at: now / 1000, patch: JSON.stringify(result.patch), changes: JSON.stringify(result.changes), applied: result.applied ? 1 : 0 });
       state = stateFromLog(log);
     }
