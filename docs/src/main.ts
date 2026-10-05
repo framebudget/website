@@ -8,11 +8,13 @@ import { preloadMotion } from "./motion";
 import { mountShareControl, mountShareNote } from "./share";
 import { mountHome } from "./sim";
 import { mountSound } from "./sound";
+import { mountThresholds } from "./thresholds";
 
 mountSound();
 mountSoundToggle();
 mountDock();
 mountChart();
+mountThresholds();
 mountHome();
 mountEffects();
 preloadMotion();

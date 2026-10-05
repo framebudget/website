@@ -4,6 +4,12 @@
  * syntax highlighting for code blocks. Everything here is static markup, so
  * the first paint already has its final size and nothing shifts when scripts
  * fill in live values.
+ *
+ * Thresholds and tier floors are rendered from the site's baseline
+ * (shared/site-effects.json). The calibration fetched from /api/calibration
+ * may refine them, so thresholds.ts rewrites every element marked here with
+ * `data-threshold`, `data-floor`, `data-ladder-bar` or `data-registry` from
+ * the live calibration.
  */
 import { defaultCalibration } from "framebudget";
 import { RESERVES } from "./copy";
@@ -98,7 +104,7 @@ export function ladder(): string {
   const h = defaultCalibration.hysteresis;
   const rows = SITE_EFFECTS.map((fx) => {
     const t = fx.threshold / LADDER_MAX;
-    return `<li class="ladder__row" data-fx="${fx.name}"><span class="ladder__name">${esc(fx.label)}</span><span class="ladder__bar" style="--c:${fx.color};--t:${t.toFixed(4)};--lo:${(t * (1 - h)).toFixed(4)};--hi:${Math.min(1, t * (1 + h)).toFixed(4)}"><span class="ladder__band"></span><span class="ladder__tick"></span></span><span class="ladder__value num num--3">${fx.threshold}</span></li>`;
+    return `<li class="ladder__row" data-fx="${fx.name}"><span class="ladder__name">${esc(fx.label)}</span><span class="ladder__bar" data-ladder-bar style="--c:${fx.color};--t:${t.toFixed(4)};--lo:${(t * (1 - h)).toFixed(4)};--hi:${Math.min(1, t * (1 + h)).toFixed(4)}"><span class="ladder__band"></span><span class="ladder__tick"></span></span><span class="ladder__value num num--3" data-threshold="${fx.name}">${fx.threshold}</span></li>`;
   }).join("");
   return `<div class="ladder"><ol class="ladder__rows" aria-label="Effect thresholds">${rows}</ol><div class="ladder__scale" aria-hidden="true"><span class="ladder__marker" data-ladder-marker><span class="ladder__marker-label">score <span class="num num--3" data-ladder-score>100</span></span></span></div></div>`;
 }
@@ -106,7 +112,7 @@ export function ladder(): string {
 export function simRows(): string {
   return SITE_EFFECTS.map(
     (fx) =>
-      `<tr data-fx="${fx.name}"><th scope="row"><span class="swatch" style="--c:${fx.color}"></span>${esc(fx.label)}</th><td class="r num">${fx.threshold}</td><td class="r num">${fx.cost}</td><td><span class="decision" data-decision>Checking</span></td></tr>`,
+      `<tr data-fx="${fx.name}"><th scope="row"><span class="swatch" style="--c:${fx.color}"></span>${esc(fx.label)}</th><td class="r num" data-threshold="${fx.name}">${fx.threshold}</td><td class="r num">${fx.cost}</td><td><span class="decision" data-decision>Checking</span></td></tr>`,
   ).join("");
 }
 
@@ -114,17 +120,22 @@ const TIERS = ["Lite", "Medium", "High", "Full"] as const;
 
 export function registry(): string {
   const floors = TIER_FLOORS;
-  const head = `<thead><tr><th scope="col">Effect</th><th scope="col">What it does</th><th scope="col" class="r">Threshold</th><th scope="col" class="r">Cost</th>${TIERS.map((t) => `<th scope="col" class="c" data-tier-col="${t}">${t} <span class="registry__floor">${floors[t]}</span></th>`).join("")}</tr></thead>`;
+  const head = `<thead><tr><th scope="col">Effect</th><th scope="col">What it does</th><th scope="col" class="r">Threshold</th><th scope="col" class="r">Cost</th>${TIERS.map((t) => `<th scope="col" class="c" data-tier-col="${t}">${t} <span class="registry__floor" data-floor="${t}">${floors[t]}</span></th>`).join("")}</tr></thead>`;
   const body = SITE_EFFECTS.map((fx) => {
     const cells = TIERS.map((t) => {
       const kept = fx.threshold <= floors[t];
-      return `<td class="c" data-tier-col="${t}"><span class="dot${kept ? "" : " dot--no"}" style="--c:${fx.color}" role="img" aria-label="${kept ? `In ${t}` : `Not in ${t}`}"></span></td>`;
+      return `<td class="c" data-tier-col="${t}"><span class="dot${kept ? "" : " dot--no"}" data-dot="${t}" style="--c:${fx.color}" role="img" aria-label="${kept ? `In ${t}` : `Not in ${t}`}"></span></td>`;
     }).join("");
     const flags = [fx.motion && "reduced motion", fx.data && "Save-Data"].filter(Boolean).join(" and ");
     const what = esc(fx.what) + (flags ? ` <span class="registry__flags">Off under ${flags}.</span>` : "");
-    return `<tr><th scope="row"><span class="swatch" style="--c:${fx.color}"></span>${esc(fx.label)} <code>${fx.name}</code></th><td>${what}</td><td class="r num">${fx.threshold}</td><td class="r num">${fx.cost}</td>${cells}</tr>`;
+    return `<tr data-registry="${fx.name}"><th scope="row"><span class="swatch" style="--c:${fx.color}"></span>${esc(fx.label)} <code>${fx.name}</code></th><td>${what}</td><td class="r num" data-threshold="${fx.name}">${fx.threshold}</td><td class="r num">${fx.cost}</td>${cells}</tr>`;
   }).join("");
   return `<table class="registry__table">${head}<tbody>${body}</tbody></table>`;
+}
+
+/** The tier floors in prose ("Lite 20, Medium 49, High 90, Full 180"), kept live like the registry's. */
+export function tierFloors(): string {
+  return TIERS.map((t) => `${t} <span data-floor="${t}">${TIER_FLOORS[t]}</span>`).join(", ");
 }
 
 /**

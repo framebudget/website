@@ -78,7 +78,7 @@
 const head = `&lt;script&gt;${bootScript}&lt;/script&gt;`;
 
 // With the calibration you pass to configure(), so boot and core agree:
-const custom = createBootScript({ calibration: { effects: { confetti: { threshold: 60, cost: 4, motion: true } } } });</code></pre>
+const custom = createBootScript({ calibrationDefaults: { effects: { confetti: { threshold: 60, cost: 4, motion: true } } } });</code></pre>
         <p>CSS can then gate effects without any JavaScript:</p>
 <pre class="code"><code data-lang="css">html[data-framebudget-effects~="parallax"] .hero { transform: translateY(var(--parallax)); }
 html[data-framebudget-effects~="blur"] .sheet { backdrop-filter: blur(16px); }</code></pre>
@@ -100,7 +100,7 @@ html[data-framebudget-effects~="blur"] .sheet { backdrop-filter: blur(16px); }</
             <tr><th scope="row"><code>budget.off("change", fn)</code></th><td>Unsubscribes.</td></tr>
             <tr><th scope="row"><code>budget.reportFrame(gapMs, source?)</code></th><td>Reports the time between two frames, for the governor.</td></tr>
             <tr><th scope="row"><code>budget.register(name, definition)</code></th><td>Adds an effect, or replaces one.</td></tr>
-            <tr><th scope="row"><code>budget.configure(options)</code></th><td>Calibration, governor and sharing options. Call it before the <code>load</code> event. Also exported as <code>configure</code>.</td></tr>
+            <tr><th scope="row"><code>budget.configure(options)</code></th><td>Calibration (<code>calibrationDefaults</code>, <code>calibration</code>), governor and sharing options. Call it before the <code>load</code> event. Also exported as <code>configure</code>.</td></tr>
             <tr><th scope="row"><code>budget.force(tier | "auto")</code></th><td>Forces a tier for the session.</td></tr>
             <tr><th scope="row"><code>budget.simulate(score | null)</code></th><td>Debug and demo only: replaces the measured score for the session.</td></tr>
             <tr><th scope="row"><code>createBudget(options?)</code></th><td>A separate instance, for tests or embedded widgets.</td></tr>
@@ -133,7 +133,7 @@ budget.on("change", (snapshot, reason) =&gt; {
 
       <section id="effects" aria-labelledby="effects-title">
         <h2 id="effects-title">Effects</h2>
-        <p>Each effect has a score threshold, a relative frame cost, and optional flags. <code>motion</code> effects turn off under <code>prefers-reduced-motion: reduce</code>; <code>data</code> effects turn off under Save-Data or a 2g connection. These are the library's built-in effects:</p>
+        <p>Each effect has a score threshold, a relative frame cost, and optional flags. <code>motion</code> effects turn off under <code>prefers-reduced-motion: reduce</code>; <code>data</code> effects turn off under Save-Data or a 2g connection. These are the library's built-in effects with their default thresholds; this site registers its own, and the home page shows the values in force on your device:</p>
         <!-- fb:defaults -->
         <p>Register your own, and pass the same definitions to <code>createBootScript</code> so the first paint already knows them:</p>
 <pre class="code"><code data-lang="ts">budget.register("confetti", { threshold: 60, cost: 4, motion: true });</code></pre>
@@ -144,7 +144,7 @@ budget.on("change", (snapshot, reason) =&gt; {
         <h2 id="tiers-title">Tiers</h2>
         <p>A tier's set is every effect whose threshold is at or below the tier floor. The reported tier is the highest tier whose whole set is allowed. Effects off because of a user preference do not lower the tier; thresholds, learning and the governor do.</p>
         <table class="table">
-          <thead><tr><th scope="col">Tier</th><th scope="col" class="r">Floor</th><th scope="col">Built-in effects</th></tr></thead>
+          <thead><tr><th scope="col">Tier</th><th scope="col" class="r">Default floor</th><th scope="col">Built-in effects</th></tr></thead>
           <tbody>
             <tr><th scope="row"><span class="tier" data-tier="Lite">Lite</span></th><td class="r num">20</td><td>hover</td></tr>
             <tr><th scope="row"><span class="tier" data-tier="Medium">Medium</span></th><td class="r num">35</td><td>adds canvasLowRes, entrances</td></tr>
@@ -186,10 +186,12 @@ worker.addEventListener("message", (e) =&gt; {
 
       <section id="calibration" aria-labelledby="calibration-title">
         <h2 id="calibration-title">Calibration</h2>
-        <p>Every number that turns measurements into decisions lives in <code>defaultCalibration</code>: reference rates, effect thresholds and costs, tier floors, hysteresis, hardware caps, pressure factors, the fallback score, the maximum age of a cached score and the clean visits before a retry. Precedence: built-in numbers, then a calibration fetched from your server, then your overrides. Every value is validated.</p>
+        <p>Every number that turns measurements into decisions lives in <code>defaultCalibration</code>: reference rates, effect thresholds and costs, tier floors, hysteresis, hardware caps, pressure factors, the fallback score, the maximum age of a cached score and the clean visits before a retry. Precedence: built-in numbers, then your <code>calibrationDefaults</code>, then a calibration fetched from your server, then your <code>calibration</code> overrides. Every value is validated. Ship the values your server may refine as defaults, and pin with <code>calibration</code> only what must hold.</p>
 <pre class="code"><code data-lang="ts">configure({
+  calibrationDefaults: {
+    effects: { parallax: { threshold: 80 } }, // refined by calibrationUrl
+  },
   calibration: {
-    effects: { parallax: { threshold: 80 } },
     tiers: { High: 80 },
     hysteresis: 0.15,
   },
