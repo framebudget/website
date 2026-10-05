@@ -45,10 +45,12 @@ jobs:
           matches() { printf '%s\n' "$files" | grep -qE "$1" && echo true || echo false; }
           # A change to this workflow runs everything, so the gates themselves get tested.
           ci='^\.github/workflows/ci\.yml$'
-          # The Worker is the root project; release.config.json lists the same paths.
-          worker='^(src/|test/|migrations/|scripts/|(wrangler\.jsonc|calibration\.json|package(-lock)?\.json|tsconfig\.json|vitest\.config\.ts)$)'
+          # The Worker is the root project; release.config.json lists the same paths. shared/ holds the
+          # site's effect registry (shared/site-effects.json): the Worker calibrates from it, and its tests
+          # check it against docs/src/effects.ts, so a change to either runs them.
+          worker='^(src/|test/|migrations/|scripts/|shared/|(wrangler\.jsonc|calibration\.json|package(-lock)?\.json|tsconfig\.json|vitest\.config\.ts|docs/src/effects\.ts)$)'
           {
-            echo "site=$(matches "^docs/|$ci")"
+            echo "site=$(matches "^docs/|^shared/|$ci")"
             echo "worker=$(matches "$worker|$ci")"
           } >> "$GITHUB_OUTPUT"
 

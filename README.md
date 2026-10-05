@@ -4,7 +4,8 @@ The website of [framebudget](https://github.com/framebudget/core), the browser l
 
 | Path | What it is |
 | --- | --- |
-| repository root | The Cloudflare Worker (see [The Worker](#the-worker)): `src/`, `test/`, `migrations/`, `scripts/calibrate.mjs`, `wrangler.jsonc`, `calibration.json`. It serves `docs/dist` through its static assets layer, receives the library's anonymous reports (`POST /api/report`, stored in D1), serves the calibration patch (`GET /api/calibration`) and stores the opt-in lab runs (`POST /api/lab/runs`, `POST /api/lab/runs/<run>/steps`, stored in D1). |
+| repository root | The Cloudflare Worker (see [The Worker](#the-worker)): `src/`, `test/`, `migrations/`, `scripts/calibrate.mjs`, `wrangler.jsonc`, `calibration.json`. It serves `docs/dist` through its static assets layer, receives the library's anonymous reports (`POST /api/report`, stored in D1), serves the calibration patch (`GET /api/calibration`), stores the opt-in lab runs (`POST /api/lab/runs`, `POST /api/lab/runs/<run>/steps`, stored in D1) and calibrates the site's effect thresholds from them every day (see [Automatic calibration](#automatic-calibration)). |
+| `shared/site-effects.json` | The site's effect numbers (threshold, cost, ms, motion and data flags per effect) and tier floors: the baseline the automatic calibration starts from and never drifts far from. Today they must equal `docs/src/effects.ts` (a Worker test fails otherwise); the site will read them from this file. |
 | [`docs/`](docs/README.md) | The site: landing page, API reference, privacy page, the opt-in lab (`/lab`), error pages and the files for AI agents (`llms.txt`, `llm.txt`, `llms-full.txt`). A static Vite build with its own `package.json`, and a live demo of the library. |
 
 Related repositories: the library is [github.com/framebudget/core](https://github.com/framebudget/core) (the npm packages `framebudget`, `@framebudget/core` and `@framebudget/react`), and the brand (fonts, logos, tokens, the release card template) is [github.com/framebudget/assets](https://github.com/framebudget/assets).
@@ -63,14 +64,15 @@ curl -i -X POST http://localhost:8787/api/lab/runs/<run>/steps \
 npx wrangler d1 execute framebudget --local --command "SELECT * FROM lab_runs"
 ```
 
-Run the retention job locally with `npx wrangler dev --local --test-scheduled` and `curl "http://localhost:8787/__scheduled?cron=17+3+*+*+*"`. Local D1 state lives in `.wrangler/` (ignored by git).
+Run the daily job (retention, then the automatic calibration) locally with `npx wrangler dev --local --test-scheduled` and `curl "http://localhost:8787/cdn-cgi/handler/scheduled?cron=17+3+*+*+*"` (`/__scheduled` never reaches the Worker here: the asset layer answers every path outside `/api/*`), then read its row with `npx wrangler d1 execute framebudget --local --command "SELECT * FROM calibration_log"`. Local D1 state lives in `.wrangler/` (ignored by git).
 
 Tests and types:
 
 ```sh
-npm test               # Vitest, test/ only; handler and lab tests run against in-memory SQLite with the real migrations
-                       # (Turnstile's siteverify stubbed), assets.test.ts runs wrangler.jsonc's routing in wrangler's
-                       # local runtime, validate.test.ts checks the report the installed framebudget package sends
+npm test               # Vitest, test/ only; handler, lab and calibration tests run against in-memory SQLite with the real
+                       # migrations (Turnstile's siteverify stubbed), assets.test.ts runs wrangler.jsonc's routing in
+                       # wrangler's local runtime, validate.test.ts checks the report the installed framebudget package
+                       # sends, site-effects.test.ts checks shared/site-effects.json against docs/src/effects.ts
 npm run typecheck      # src/ with the Workers types, then test/
 ```
 
@@ -80,9 +82,9 @@ One Cloudflare Worker (free plan) for framebudget.dev:
 
 - Serves the landing site (`docs/dist`, the Vite build) through the static assets layer. Static files are served without running the Worker, so they cost nothing and do not count against Worker requests. `html_handling` is `auto-trailing-slash`: `/` serves `index.html`, `/api` and `/privacy` serve `api.html` and `privacy.html`, which is how the site links them. `/privacy.html` redirects to `/privacy`. `not_found_handling` is `404-page`: a path with no matching file gets `404.html` (`docs/404.html`) with status 404, from the asset layer.
 - `POST /api/report`: receives the anonymous report the library sends with `navigator.sendBeacon` and stores one row in D1.
-- `GET /api/calibration`: returns the calibration patch the library fetches at most once a day.
+- `GET /api/calibration`: returns the calibration patch the library fetches at most once a day: `calibration.json` with the latest automatic thresholds merged in.
 - `POST /api/lab/runs` and `POST /api/lab/runs/<run>/steps`: the opt-in lab (`/lab`). A visitor who consents and passes Turnstile gets one row; each measured step updates that row.
-- A daily cron deletes reports and lab runs older than 400 days and closes expired lab runs.
+- A daily cron deletes reports, lab runs and calibration log rows older than 400 days, closes expired lab runs, then calibrates the effect thresholds from the lab runs (see [Automatic calibration](#automatic-calibration)).
 
 The data exists to calibrate the score scale (reference rates) and the effect thresholds on real devices.
 
@@ -112,9 +114,9 @@ Success is `204 No Content`. Validation is strict: exact keys at every level, `v
 
 #### `GET /api/calibration`
 
-Returns `calibration.json` with `Cache-Control: public, max-age=3600`, and stores it in the edge cache (`caches.default`) for an hour. Other methods get 405.
+Returns `calibration.json` deep-merged with the patch of the latest applied row of `calibration_log` (the automatic thresholds win; see [Automatic calibration](#automatic-calibration)), with `Cache-Control: public, max-age=3600`, and stores it in the edge cache (`caches.default`) for an hour. Without an applied row, while the kill switch `AUTO_CALIBRATION` is not `on`, or when D1 fails (that answer is not cached), it returns `calibration.json` alone. Other methods get 405.
 
-The patch is a JSON file in the repository, bundled into the Worker at build time, instead of a row in D1 or a KV value. Calibration changes then go through pull request review, ship with a deploy, and need no extra storage, admin endpoint or secret. It starts as `{}`: the library defaults stay in force. Note that `mergeCalibration(defaultCalibration, remote, ...sitePatches)` lets the site's own patch (effect thresholds in `docs/src/effects.ts`) win over this one, so this file mainly matters for other sites using the library and for reference rates, cold reference rates, tier floors, caps and pressure multipliers. Changing `reference` changes `calibrationKey`, which invalidates cached scores on every device; only change it with a calibration run, not as a no-op edit.
+`calibration.json` is a JSON file in the repository, bundled into the Worker at build time, instead of a row in D1 or a KV value: hand-made calibration changes go through pull request review, ship with a deploy, and need no extra storage, admin endpoint or secret. It starts as `{}`: the library defaults stay in force. The automatic thresholds are the only part that lives in D1, behind the guardrails of [Automatic calibration](#automatic-calibration). The library applies the remote patch over its defaults and the site's `calibrationDefaults`, and under the site's `calibration` patches (core v0.4.0); while the site still passes its thresholds as `calibration`, the site's values win and the automatic thresholds have no effect on framebudget.dev. Changing `reference` changes `calibrationKey`, which invalidates cached scores on every device; only change it with a calibration run, not as a no-op edit.
 
 #### `POST /api/lab/runs`
 
@@ -253,6 +255,21 @@ Indexes: `score`, `(engine, engine_version)`, `(os, mobile)`, `created_day`. `mo
 
 Index: `created_day` (the daily cap counts today's rows; retention deletes by day). A row is at most about 27 KB (20 steps of 32 effect names each); a typical run is about 4 KB.
 
+`migrations/0004_calibration_log.sql`, table `calibration_log` (one row per daily automatic calibration, applied or not; see [Automatic calibration](#automatic-calibration)):
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `id` | INTEGER PK | Row id, increasing; the latest applied row is the one with the highest `id` and `applied = 1` |
+| `created_at` | INTEGER | Epoch seconds of the evaluation |
+| `cal` | TEXT NULL | Calibration version of the runs used, NULL when no run qualified |
+| `runs` | INTEGER | Lab runs counted and used (the most recent 1000 at most) |
+| `excluded` | INTEGER | Lab runs of that version excluded within the 400 days (refresh rate, missing baseline, busy baseline, thermal throttling) |
+| `patch` | TEXT | The full automatic patch in force after this evaluation, a `CalibrationPatch` JSON with `effects.<name>.threshold` only |
+| `changes` | TEXT | JSON array, one `{effect, from, to, proposed, devices, limitedBy}` per effect evaluated |
+| `applied` | INTEGER | 1 when at least one threshold changed |
+
+Index: `created_at` (retention). One small row a day.
+
 ### Retention
 
 The cron trigger (`17 3 * * *`, daily) runs, with the UTC day 400 days before the run:
@@ -260,8 +277,9 @@ The cron trigger (`17 3 * * *`, daily) runs, with the UTC day 400 days before th
 - `DELETE FROM reports WHERE created_day < ?`
 - `DELETE FROM lab_runs WHERE created_day < ?`
 - `UPDATE lab_runs SET write_key_hash = NULL, open_until = NULL WHERE open_until < ?` (the current epoch second): runs the page abandoned are closed, so no time of day survives a run.
+- `DELETE FROM calibration_log WHERE created_at < ? AND id <> COALESCE((SELECT MAX(id) FROM calibration_log WHERE applied = 1), 0)` (the epoch second that UTC day starts): the latest applied row stays however old, since it holds the patch in force.
 
-A row from exactly 400 days ago is kept; one day older is deleted.
+A row from exactly 400 days ago is kept; one day older is deleted. The automatic calibration runs after these statements, in the same job.
 
 ### Free plan notes
 
@@ -269,6 +287,51 @@ A row from exactly 400 days ago is kept; one day older is deleted.
 - D1 free plan: 5 GB storage, 100,000 rows written and 5 million rows read per day. A row is about 400 bytes. Every browser reports (`sampleRate: 1`) but at most once a week (`minIntervalDays: 7`), so rows track weekly unique browsers rather than page views; 400 days of retention fit in 5 GB up to about 30,000 reports a day (12 million rows). Past the daily write limit, inserts fail and the Worker answers 503 until the next day; nothing is billed.
 - Lab: `LAB_DAILY_CAP` (a var in `wrangler.jsonc`, `"1000"`) bounds new runs per UTC day. A run is at most 21 row writes (the insert and 20 steps), so the lab adds at most about 21,000 row writes a day, and the cap's `COUNT(*)` reads at most one index entry per run already created that day (about 500,000 rows read a day at the cap). A run is about 4 KB (27 KB at most), so 400 days at the cap take about 1.6 GB. Change the cap in `wrangler.jsonc` and deploy; `"0"` closes the lab. Turnstile guards run creation, and the write key guards each run's steps.
 - No rate limiting binding is configured. The Workers Rate Limiting API page does not state whether the binding is available on the free plan, so it is left out rather than risk a failed deploy. If added later, key it by a constant or by route, never by IP.
+- Automatic calibration: a scheduled invocation on the Workers free plan gets 10 ms of CPU; D1 query time does not count, but everything the Worker parses and computes does, and an evaluation that runs out of CPU fails silently (the error is swallowed, no log row that day). So D1 does the heavy part: the SQL in `src/calibration/runs.ts` parses the steps JSON with `json_each`, applies the exclusions, keeps the 1000 most recent counted runs (`MAX_RUNS`), and returns only compact rows (run, score, refresh rate, step name, p95) for the registry's effects, about 8 rows per run. 1000 runs are plenty for a 5% tail with 10 devices or more at or above a threshold, and the bound keeps the Worker's share flat however large the lab grows: on a development machine, parsing the 8,000 rows of 1000 runs takes about 1.6 ms and the evaluation about 1.3 ms. D1 reads each run of the 400-day window a few times a day (two queries), well within the 5 million rows read a day even at the full `LAB_DAILY_CAP`.
+
+## Automatic calibration
+
+Every day, after retention, the cron evaluates the effect thresholds of framebudget.dev from the lab runs and, within hard guardrails, changes them without anyone editing a file. The code is `src/calibration/`; `scripts/calibrate.mjs --lab` runs the same code and prints what the cron would apply today.
+
+1. **Runs.** Completed lab runs with `protocol >= 2` from the last 400 days, of the most common calibration version among them (scores of different versions are on different scales). Protocol 1 runs and other versions are ignored. Each remaining run is excluded when its refresh rate is outside 30..360 Hz, when it lacks the `baseline` or the `baseline-end` step, when its `baseline` p95 frame time is above 1.5 refresh intervals (the device was busy before any effect), or when its `baseline-end` p95 is more than 25% above its `baseline` p95 (it throttled during the run). The rest are counted, and the 1000 most recent of them (by day) are used; see [Free plan notes](#free-plan-notes) for why. All of this happens in SQL (`src/calibration/runs.ts`), which hands the Worker one compact row per effect step.
+2. **Proposal.** For each effect of `shared/site-effects.json` that a counted run measured (the lab cannot drive `hover`, `sound`, `morph`, `pageTransition`, `springs`, `magnetic` and `spotlight`), the proposed threshold is the lowest device score S such that, among the counted devices with score >= S that ran the effect, fewer than 5% had a step p95 frame time above `(1000 / 55) * (60 / refreshHz)` ms (18.18 ms at 60 Hz, 9.09 ms at 120 Hz), with at least 10 such devices. Otherwise there is no proposal and the effect keeps its value (`limitedBy: "devices"`). The search is `src/calibration/search.ts`, the one the script's `--lab` table uses too.
+3. **Guardrails**, in this order, from the current value (the last applied automatic value, else the baseline in `shared/site-effects.json`). Values are kept on tenths, the lab's score precision.
+   1. Step limit (`step`): at most 20% away from the current value.
+   2. Drift limit (`drift`): within 0.5x..2x of the baseline. Moving further needs a human editing the baseline.
+   3. Tier floors (`tier`): never crosses a tier floor of `shared/site-effects.json`. An effect runs on a tier when its threshold is at most the tier floor, so the threshold stays above the highest floor below the baseline and at most the lowest floor at or above it: automatic changes never move an effect between tiers (`textReveal` at 46 stays within 20.1..49, `blur` at 135 within 90.1..180).
+   4. Minimum change (`min-change`): skipped unless the result differs from the current value by at least 5%.
+   5. Cadence (`cadence`): at most one applied change per effect every 7 days.
+
+   `limitedBy` in the log names the last guardrail that changed or held back the value (null when the proposal went through as is). Drift and tier are hard limits: when a human moves a baseline so that the value in force falls outside them, the next evaluation in which a counted run measured the effect pulls it back, even without a proposal, past minimum change and cadence.
+4. **Patch.** Only `effects.<name>.threshold` ever changes: never reference rates, version, tiers, hysteresis, costs or flags. The new patch is the previous one with the changed thresholds (effects gone from the registry dropped). Every evaluation writes one `calibration_log` row (see [Schema](#schema)): `applied = 1` when a threshold changed, and `patch` holds the full patch in force afterwards either way. `GET /api/calibration` serves `calibration.json` deep-merged with the patch of the latest applied row. An error in the evaluation is swallowed (nothing is logged, like everything else here): retention has already run, and that day simply has no log row.
+
+Clients see a change within about a day: the edge cache keeps the answer for an hour, and the library fetches the patch at most once a day and applies it from the next visit.
+
+### Kill switch
+
+`AUTO_CALIBRATION` in `wrangler.jsonc` (`vars`) is `"on"`. Set it to anything else (`"off"`) and deploy: the cron then evaluates nothing and writes no log row, and `GET /api/calibration` serves `calibration.json` alone (after at most an hour of edge cache). The log stays; setting it back to `"on"` serves the latest applied patch again and resumes the daily evaluation from it.
+
+### Reading the log
+
+```sh
+# The last evaluations: when, how many runs, applied or not.
+npx wrangler d1 execute framebudget --remote --command "SELECT id, datetime(created_at, 'unixepoch') AS at, cal, runs, excluded, applied FROM calibration_log ORDER BY id DESC LIMIT 14"
+# What each effect proposed and why it moved or not, in the latest evaluation.
+npx wrangler d1 execute framebudget --remote --command "SELECT json_extract(c.value, '$.effect') AS effect, json_extract(c.value, '$.from') AS from_value, json_extract(c.value, '$.to') AS to_value, json_extract(c.value, '$.proposed') AS proposed, json_extract(c.value, '$.devices') AS devices, json_extract(c.value, '$.limitedBy') AS limited_by FROM calibration_log l, json_each(l.changes) c WHERE l.id = (SELECT MAX(id) FROM calibration_log)"
+# The patch in force (what GET /api/calibration merges in).
+npx wrangler d1 execute framebudget --remote --command "SELECT id, datetime(created_at, 'unixepoch') AS at, patch FROM calibration_log WHERE applied = 1 ORDER BY id DESC LIMIT 1"
+```
+
+### Rolling back
+
+- Everything at once: set `AUTO_CALIBRATION` to `"off"` (see [Kill switch](#kill-switch)). The site's own values are back within about a day.
+- The latest change only: delete the latest applied rows; the endpoint then serves the patch of the previous applied row (or `calibration.json` alone when none is left), after at most an hour of edge cache. For example, the last one:
+
+  ```sh
+  npx wrangler d1 execute framebudget --remote --command "DELETE FROM calibration_log WHERE id = (SELECT MAX(id) FROM calibration_log WHERE applied = 1)"
+  ```
+
+  The cadence then counts from the remaining applied rows, so the next evaluation may apply a change again; turn the kill switch off first if the data itself is the problem.
 
 ## Calibration workflow
 
@@ -280,7 +343,7 @@ A row from exactly 400 days ago is kept; one day older is deleted.
 
    A CSV export with a header row works too.
 
-2. Run the script (plain Node; it reads the library's default reference rates from the installed `framebudget` package, so run `npm ci` first):
+2. Run the script (Node 22.18 or later: it runs `src/calibration/` with Node's type stripping; it reads the library's default reference rates from the installed `framebudget` package, so run `npm ci` first):
 
    ```sh
    node scripts/calibrate.mjs export.json --percentile 50 --target-fps 55 --max-under 0.05
@@ -304,7 +367,7 @@ A row from exactly 400 days ago is kept; one day older is deleted.
    node scripts/calibrate.mjs --lab lab.json --target-fps 55 --max-under 0.05 --min-samples 10
    ```
 
-   It uses the runs of one calibration version (`--cal`, default the most common) that measured a `baseline` step, and prints per effect (every step except `baseline` and `baseline-end`; `all` is every effect at once):
+   It uses the runs of one calibration version (`--cal`, default the most common) that measured a `baseline` step, protocol 2 runs only whenever the export has any (a device that ran both protocols must not count twice), and prints per effect (every step except `baseline` and `baseline-end`; `all` is every effect at once):
    - the frame cost over the baseline, `medianMs - baseline medianMs` of the same run, as the median and p95 across devices in each score bucket (0-25, 25-50, 50-75, 75-100, 100-150, 150-200, 200+);
    - a proposed threshold: the lowest score at which fewer than `--max-under` of the devices at or above it had a p95 frame time over the target, which is `1000 / --target-fps` ms at 60 Hz scaled by the refresh rate (18.18 ms at 60 Hz, 9.09 ms at 120 Hz by default), with at least `--min-samples` devices at or above it; otherwise `not enough devices`.
 
@@ -312,17 +375,24 @@ A row from exactly 400 days ago is kept; one day older is deleted.
 
    Frame times stay locked to the refresh rate while a device has headroom, so on most devices that analysis reads a cost of 0. Protocol 2 runs also measure the main-thread work of each frame, and `--lab` then prints a second table, over the protocol 2 runs of the same calibration version whose `baseline` step has a work sample. Per effect:
    - the cost, `workMeanMs - baseline workMeanMs` of the same run, floored at 0, converted to the score 100 device the way `docs/src/effects.ts` models an effect (`msAt(ms, score) = ms * 100 / score`, so `ms at 100 = cost * score / 100`);
-   - the devices, the median and p90 of that `ms at 100`, the effect's current `ms` read from `docs/src/effects.ts`, and the median as the proposed `ms` once at least `--min-samples` devices measured the effect; otherwise `not enough devices`.
+   - the devices, the median and p90 of that `ms at 100`, the effect's current `ms` read from `shared/site-effects.json`, and the median as the proposed `ms` once at least `--min-samples` devices measured the effect; otherwise `not enough devices`.
 
    The work excludes compositor and GPU work, so an effect like backdrop blur reads lower here than it costs. Try it on the sample: `node scripts/calibrate.mjs --lab test/fixtures/lab-work-export.json --min-samples 4`.
 
-3. Apply the result: edit the effect thresholds and `ms` in `docs/src/effects.ts` (and the library defaults, `defaultCalibration` in [github.com/framebudget/core](https://github.com/framebudget/core), when they should change for everyone; the site picks them up with the library release that ships them), and/or set `reference` (and `coldReference`) in `calibration.json`. If the reference rates move, scale every threshold and tier floor by the printed factor in the same change, so effects stay on the same devices.
+   Last, `--lab` prints what the daily [automatic calibration](#automatic-calibration) would apply today: the same code, runs, exclusions and guardrails as the cron (the export is loaded into an in-memory `node:sqlite` database built from `migrations/`, and the cron's own SQL selects the runs), with its fixed settings (`--target-fps`, `--max-under`, `--min-samples` and `--cal` do not apply to it). Per effect it prints the devices, the proposed threshold, the current and the resulting value and the guardrail that limited it, then the resulting patch. Pass the automatic calibration in force with `--current`, either the log export (the patch in force and the cadence, exactly as the cron reads them) or a patch JSON such as the output of `GET /api/calibration` (the patch only; the cadence goes unchecked); without it every effect starts from its baseline:
+
+   ```sh
+   npx wrangler d1 execute framebudget --remote --json --command "SELECT * FROM calibration_log WHERE applied = 1" > log.json
+   node scripts/calibrate.mjs --lab lab.json --current log.json
+   ```
+
+3. Apply the result: edit the effect thresholds and `ms` in both `docs/src/effects.ts` and `shared/site-effects.json` (the Worker's tests fail when they disagree; a new threshold there is the new baseline of the automatic calibration), and the library defaults, `defaultCalibration` in [github.com/framebudget/core](https://github.com/framebudget/core), when they should change for everyone (the site picks them up with the library release that ships them), and/or set `reference` (and `coldReference`) in `calibration.json`. If the reference rates move, scale every threshold and tier floor by the printed factor in the same change, so effects stay on the same devices.
 
 4. Open a pull request, then release the website (see [Releases and deploys](#releases-and-deploys)): the release deploys the Worker and the site.
 
 ## Pull requests
 
-`.github/workflows/ci.yml` runs on pull requests that are ready for review (drafts skip every job; marking one ready starts the run). A change under `docs/` runs the Site job (install and build), a change to the Worker's paths at the root (`src/`, `test/`, `migrations/`, `scripts/`, `wrangler.jsonc`, `calibration.json`, `package.json`, `package-lock.json`, `tsconfig.json`, `vitest.config.ts`) runs the Worker job (install, typecheck, tests), and a change to `ci.yml` runs both. The `CI` job is the one required check: it fails when any job failed and passes when the others were skipped.
+`.github/workflows/ci.yml` runs on pull requests that are ready for review (drafts skip every job; marking one ready starts the run). A change under `docs/` or `shared/` runs the Site job (install and build), a change to the Worker's paths at the root (`src/`, `test/`, `migrations/`, `scripts/`, `shared/`, `wrangler.jsonc`, `calibration.json`, `package.json`, `package-lock.json`, `tsconfig.json`, `vitest.config.ts`) or to `docs/src/effects.ts` (checked against `shared/site-effects.json`) runs the Worker job (install, typecheck, tests), and a change to `ci.yml` runs both. The `CI` job is the one required check: it fails when any job failed and passes when the others were skipped.
 
 ## Releases and deploys
 

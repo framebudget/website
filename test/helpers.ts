@@ -26,6 +26,10 @@ export class SqliteD1 {
           this.statements.push({ sql, params });
           return this.db.prepare(sql).get(...params) ?? null;
         },
+        all: async () => {
+          this.statements.push({ sql, params });
+          return { success: true, results: this.db.prepare(sql).all(...params), meta: {} };
+        },
       }),
     };
   }
@@ -37,17 +41,22 @@ export class SqliteD1 {
   labRows(): Record<string, unknown>[] {
     return this.db.prepare("SELECT * FROM lab_runs ORDER BY created_day, id").all() as Record<string, unknown>[];
   }
+
+  logRows(): Record<string, unknown>[] {
+    return this.db.prepare("SELECT * FROM calibration_log ORDER BY id").all() as Record<string, unknown>[];
+  }
 }
 
 /** `assets` answers env.ASSETS.fetch; by default every asset is missing. */
 export function makeEnv(db = new SqliteD1(), assets: (request: Request) => Promise<Response> = async () => new Response("not found", { status: 404 })) {
   const assetRequests: Request[] = [];
   const env = {
-    // Only prepare/bind/run/first are used by the Worker; the SQLite stand-in covers exactly that.
+    // Only prepare/bind/run/first/all are used by the Worker; the SQLite stand-in covers exactly that.
     DB: db as unknown as D1Database,
     // Cloudflare's always-passing test secret; tests stub fetch to siteverify.
     TURNSTILE_SECRET_KEY: "1x0000000000000000000000000000000AA",
     LAB_DAILY_CAP: "1000",
+    AUTO_CALIBRATION: "on",
     ASSETS: {
       fetch: async (request: Request) => {
         assetRequests.push(request);

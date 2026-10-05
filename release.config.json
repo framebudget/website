@@ -10,6 +10,7 @@
         "test/",
         "migrations/",
         "scripts/",
+        "shared/",
         "wrangler.jsonc",
         "calibration.json",
         "package.json",

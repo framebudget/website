@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import calibration from "../calibration.json";
 import { handleFetch, handleFetchSafely, MAX_BODY_BYTES, retentionCutoff, runRetention } from "../src/handler";
+import { CALIBRATION_LOG_RETENTION_SQL } from "../src/calibration/store.ts";
 import worker from "../src/index";
 import { beacon, CHROME_ANDROID_UA, installCache, makeCtx, makeEnv, ORIGIN, validReport } from "./helpers";
 
@@ -264,6 +265,7 @@ describe("retention", () => {
       { sql: "DELETE FROM reports WHERE created_day < ?", params: ["2025-08-29"] },
       { sql: "DELETE FROM lab_runs WHERE created_day < ?", params: ["2025-08-29"] },
       { sql: "UPDATE lab_runs SET write_key_hash = NULL, open_until = NULL WHERE open_until < ?", params: [Math.floor(NOW / 1000)] },
+      { sql: CALIBRATION_LOG_RETENTION_SQL, params: [Date.UTC(2025, 7, 29) / 1000] },
     ]);
   });
 });
