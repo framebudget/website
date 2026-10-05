@@ -468,7 +468,7 @@ function printLab(result, options) {
   }
   out.push("");
   out.push("Notes: the score is the lab's framebudget score on the calibration version above. Apply a threshold to");
-  out.push("docs/src/effects.ts on the same scale, or rescale it by the factor the reports analysis prints.");
+  out.push("shared/site-effects.json on the same scale, or rescale it by the factor the reports analysis prints.");
   return out.join("\n");
 }
 

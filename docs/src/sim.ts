@@ -7,6 +7,7 @@ import { setTask, watchVisibility } from "./loop";
 import { mountLog, mountMeter } from "./meter";
 import { cue } from "./sound";
 import { simulateSoon, watch } from "./state";
+import { thresholdOf } from "./thresholds";
 import { all, pop, setText, swapText } from "./ui";
 
 const UNDO_MS = 5000;
@@ -16,13 +17,13 @@ const label = (name: string): string => BY_NAME[name]?.label ?? name;
 
 const listNames = (names: readonly string[]): string => joinNames(names.map(label));
 
-/** What the decision column says about one effect. */
+/** What the decision column says about one effect, from the calibration framebudget decided with. */
 function decision(name: string, snap: BudgetSnapshot): string {
-  const fx = BY_NAME[name]!;
-  if (snap.effects.includes(name)) return (snap.score ?? 0) < fx.threshold ? "On, held by hysteresis" : "On";
+  const threshold = thresholdOf(snap, name);
+  if (snap.effects.includes(name)) return (snap.score ?? 0) < threshold ? "On, held by hysteresis" : "On";
   switch (snap.off[name]) {
     case "threshold":
-      return `Off, needs ${Math.ceil(fx.threshold * (1 + snap.calibration.hysteresis))}`;
+      return `Off, needs ${Math.ceil(threshold * (1 + snap.calibration.hysteresis))}`;
     case "motion":
       return "Off, reduced motion";
     case "data":

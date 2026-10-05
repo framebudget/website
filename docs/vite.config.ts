@@ -1,9 +1,9 @@
 import { resolve } from "node:path";
-import { defineConfig, type Plugin } from "vite";
+import { defineConfig, searchForWorkspaceRoot, type Plugin } from "vite";
 import { createBootScript } from "framebudget/boot";
-import { calibration } from "./src/effects";
+import { calibrationDefaults } from "./src/effects";
 import { llmsFiles } from "./src/llms";
-import { defaultsTable, dock, footer, highlightCode, ladder, nav, picker, registry, reserve, shareNote, simRows } from "./src/render";
+import { defaultsTable, dock, footer, highlightCode, ladder, nav, picker, registry, reserve, shareNote, simRows, tierFloors } from "./src/render";
 import { seoHead, type SeoPage } from "./src/seo";
 
 /**
@@ -26,6 +26,7 @@ const PARTIALS: Record<string, () => string> = {
   ladder,
   "sim-rows": simRows,
   registry,
+  "tier-floors": tierFloors,
   defaults: defaultsTable,
 };
 
@@ -34,7 +35,7 @@ const PARTIALS: Record<string, () => string> = {
  * before the first paint, and renders the static partials and code blocks.
  */
 function framebudgetPages(): Plugin {
-  const boot = createBootScript({ calibration });
+  const boot = createBootScript({ calibrationDefaults });
   return {
     name: "framebudget-pages",
     transformIndexHtml: {
@@ -84,6 +85,8 @@ function inlineCss(): Plugin {
 
 export default defineConfig({
   plugins: [framebudgetPages(), inlineCss(), llmsFiles()],
+  // src/effects.ts reads ../shared/site-effects.json, outside this project; the dev server may serve it.
+  server: { fs: { allow: [searchForWorkspaceRoot(import.meta.dirname), resolve(import.meta.dirname, "../shared")] } },
   build: {
     target: "es2020",
     cssCodeSplit: false,

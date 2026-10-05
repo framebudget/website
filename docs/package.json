@@ -11,12 +11,16 @@
   },
   "dependencies": {
     "cuelume": "^0.2.4",
-    "framebudget": "https://github.com/framebudget/core/releases/download/v0.2.1/framebudget-framebudget-0.2.1.tgz",
+    "framebudget": "https://github.com/framebudget/core/releases/download/v0.4.0/framebudget-0.4.0.tgz",
     "motion": "^12.23.0"
   },
   "devDependencies": {
     "@types/node": "^22.20.5",
     "typescript": "^5.9.3",
     "vite": "^7.1.0"
+  },
+  "overrides": {
+    "@framebudget/core": "https://github.com/framebudget/core/releases/download/v0.4.0/framebudget-core-0.4.0.tgz",
+    "@framebudget/react": "https://github.com/framebudget/core/releases/download/v0.4.0/framebudget-react-0.4.0.tgz"
   }
 }

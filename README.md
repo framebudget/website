@@ -5,21 +5,23 @@ The website of [framebudget](https://github.com/framebudget/core), the browser l
 | Path | What it is |
 | --- | --- |
 | repository root | The Cloudflare Worker (see [The Worker](#the-worker)): `src/`, `test/`, `migrations/`, `scripts/calibrate.mjs`, `wrangler.jsonc`, `calibration.json`. It serves `docs/dist` through its static assets layer, receives the library's anonymous reports (`POST /api/report`, stored in D1), serves the calibration patch (`GET /api/calibration`), stores the opt-in lab runs (`POST /api/lab/runs`, `POST /api/lab/runs/<run>/steps`, stored in D1) and calibrates the site's effect thresholds from them every day (see [Automatic calibration](#automatic-calibration)). |
-| `shared/site-effects.json` | The site's effect numbers (threshold, cost, ms, motion and data flags per effect) and tier floors: the baseline the automatic calibration starts from and never drifts far from. Today they must equal `docs/src/effects.ts` (a Worker test fails otherwise); the site will read them from this file. |
+| `shared/site-effects.json` | The site's effect numbers (threshold, cost, ms, motion and data flags per effect) and tier floors: the baseline the automatic calibration starts from and never drifts far from. The site reads them from this file (`docs/src/effects.ts` adds labels, colors and copy) and ships them as framebudget's `calibrationDefaults`, so the automatic thresholds served by `/api/calibration` refine them. |
 | [`docs/`](docs/README.md) | The site: landing page, API reference, privacy page, the opt-in lab (`/lab`), error pages and the files for AI agents (`llms.txt`, `llm.txt`, `llms-full.txt`). A static Vite build with its own `package.json`, and a live demo of the library. |
 
 Related repositories: the library is [github.com/framebudget/core](https://github.com/framebudget/core) (the npm packages `framebudget`, `@framebudget/core` and `@framebudget/react`), and the brand (fonts, logos, tokens, the release card template) is [github.com/framebudget/assets](https://github.com/framebudget/assets).
 
 ## The library as a dependency
 
-The site and the Worker's tests use the published library, never its source. Until the library is on npmjs, `docs/package.json` (dependency) and the root `package.json` (devDependency) install it from a release asset of [framebudget/core](https://github.com/framebudget/core/releases): `"framebudget": "https://github.com/framebudget/core/releases/download/v0.2.1/framebudget-framebudget-0.2.1.tgz"`, today's full package. Release assets are immutable and public, so no registry or token is involved, and both lockfiles pin the tarball's integrity. Check the tarball against the core release attestation with:
+The site and the Worker's tests use the published library, never its source. Until the library is on npmjs, `docs/package.json` (dependency) and the root `package.json` (devDependency) install it from the release assets of core [v0.4.0](https://github.com/framebudget/core/releases/tag/v0.4.0): `"framebudget": "https://github.com/framebudget/core/releases/download/v0.4.0/framebudget-0.4.0.tgz"`, with npm `overrides` pointing its dependencies `@framebudget/core` and `@framebudget/react` at their own assets of the same release (`framebudget-core-0.4.0.tgz`, `framebudget-react-0.4.0.tgz`), so one copy of each is installed and nothing comes from a registry. Release assets are immutable and public, so no registry or token is involved, and both lockfiles pin each tarball's integrity. Check the tarballs against the core release attestation with:
 
 ```sh
-gh release download v0.2.1 --repo framebudget/core --pattern 'framebudget-framebudget-0.2.1.tgz'
-gh release verify-asset v0.2.1 framebudget-framebudget-0.2.1.tgz --repo framebudget/core
+gh release download v0.4.0 --repo framebudget/core --pattern 'framebudget-*0.4.0.tgz'
+gh release verify-asset v0.4.0 framebudget-0.4.0.tgz --repo framebudget/core
+gh release verify-asset v0.4.0 framebudget-core-0.4.0.tgz --repo framebudget/core
+gh release verify-asset v0.4.0 framebudget-react-0.4.0.tgz --repo framebudget/core
 ```
 
-The package's `README.md` becomes `llms-full.txt`, and the Worker's calibration script reads `defaultCalibration` from it. To move to a new library release, change the URL in both `package.json` files, run `npm install` at the root and in `docs/`, and commit both lockfiles.
+The package's `README.md` becomes `llms-full.txt`, and the Worker's calibration script reads `defaultCalibration` from it. To move to a new library release, change the three URLs (the dependency and both `overrides`) in both `package.json` files, run `npm install` at the root and in `docs/`, and commit both lockfiles.
 
 ## Local development
 
@@ -72,7 +74,7 @@ Tests and types:
 npm test               # Vitest, test/ only; handler, lab and calibration tests run against in-memory SQLite with the real
                        # migrations (Turnstile's siteverify stubbed), assets.test.ts runs wrangler.jsonc's routing in
                        # wrangler's local runtime, validate.test.ts checks the report the installed framebudget package
-                       # sends, site-effects.test.ts checks shared/site-effects.json against docs/src/effects.ts
+                       # sends
 npm run typecheck      # src/ with the Workers types, then test/
 ```
 
@@ -116,7 +118,7 @@ Success is `204 No Content`. Validation is strict: exact keys at every level, `v
 
 Returns `calibration.json` deep-merged with the patch of the latest applied row of `calibration_log` (the automatic thresholds win; see [Automatic calibration](#automatic-calibration)), with `Cache-Control: public, max-age=3600`, and stores it in the edge cache (`caches.default`) for an hour. Without an applied row, while the kill switch `AUTO_CALIBRATION` is not `on`, or when D1 fails (that answer is not cached), it returns `calibration.json` alone. Other methods get 405.
 
-`calibration.json` is a JSON file in the repository, bundled into the Worker at build time, instead of a row in D1 or a KV value: hand-made calibration changes go through pull request review, ship with a deploy, and need no extra storage, admin endpoint or secret. It starts as `{}`: the library defaults stay in force. The automatic thresholds are the only part that lives in D1, behind the guardrails of [Automatic calibration](#automatic-calibration). The library applies the remote patch over its defaults and the site's `calibrationDefaults`, and under the site's `calibration` patches (core v0.4.0); while the site still passes its thresholds as `calibration`, the site's values win and the automatic thresholds have no effect on framebudget.dev. Changing `reference` changes `calibrationKey`, which invalidates cached scores on every device; only change it with a calibration run, not as a no-op edit.
+`calibration.json` is a JSON file in the repository, bundled into the Worker at build time, instead of a row in D1 or a KV value: hand-made calibration changes go through pull request review, ship with a deploy, and need no extra storage, admin endpoint or secret. It starts as `{}`: the library defaults stay in force. The automatic thresholds are the only part that lives in D1, behind the guardrails of [Automatic calibration](#automatic-calibration). The library applies the remote patch over its defaults and the site's `calibrationDefaults`, and under the site's `calibration` patches (core v0.4.0). The site passes its whole registry and tier floors (`shared/site-effects.json`) as `calibrationDefaults` and nothing site-specific as `calibration`, so the automatic thresholds refine the site's values from a browser's next visit. Changing `reference` changes `calibrationKey`, which invalidates cached scores on every device; only change it with a calibration run, not as a no-op edit.
 
 #### `POST /api/lab/runs`
 
@@ -386,13 +388,13 @@ npx wrangler d1 execute framebudget --remote --command "SELECT id, datetime(crea
    node scripts/calibrate.mjs --lab lab.json --current log.json
    ```
 
-3. Apply the result: edit the effect thresholds and `ms` in both `docs/src/effects.ts` and `shared/site-effects.json` (the Worker's tests fail when they disagree; a new threshold there is the new baseline of the automatic calibration), and the library defaults, `defaultCalibration` in [github.com/framebudget/core](https://github.com/framebudget/core), when they should change for everyone (the site picks them up with the library release that ships them), and/or set `reference` (and `coldReference`) in `calibration.json`. If the reference rates move, scale every threshold and tier floor by the printed factor in the same change, so effects stay on the same devices.
+3. Apply the result: edit the effect thresholds and `ms` in `shared/site-effects.json` (the site reads them from there; a new threshold there is the new baseline of the automatic calibration), and the library defaults, `defaultCalibration` in [github.com/framebudget/core](https://github.com/framebudget/core), when they should change for everyone (the site picks them up with the library release that ships them), and/or set `reference` (and `coldReference`) in `calibration.json`. If the reference rates move, scale every threshold and tier floor by the printed factor in the same change, so effects stay on the same devices.
 
 4. Open a pull request, then release the website (see [Releases and deploys](#releases-and-deploys)): the release deploys the Worker and the site.
 
 ## Pull requests
 
-`.github/workflows/ci.yml` runs on pull requests that are ready for review (drafts skip every job; marking one ready starts the run). A change under `docs/` or `shared/` runs the Site job (install and build), a change to the Worker's paths at the root (`src/`, `test/`, `migrations/`, `scripts/`, `shared/`, `wrangler.jsonc`, `calibration.json`, `package.json`, `package-lock.json`, `tsconfig.json`, `vitest.config.ts`) or to `docs/src/effects.ts` (checked against `shared/site-effects.json`) runs the Worker job (install, typecheck, tests), and a change to `ci.yml` runs both. The `CI` job is the one required check: it fails when any job failed and passes when the others were skipped.
+`.github/workflows/ci.yml` runs on pull requests that are ready for review (drafts skip every job; marking one ready starts the run). A change under `docs/` or `shared/` runs the Site job (install and build), a change to the Worker's paths at the root (`src/`, `test/`, `migrations/`, `scripts/`, `shared/`, `wrangler.jsonc`, `calibration.json`, `package.json`, `package-lock.json`, `tsconfig.json`, `vitest.config.ts`) runs the Worker job (install, typecheck, tests), and a change to `ci.yml` runs both. The `CI` job is the one required check: it fails when any job failed and passes when the others were skipped.
 
 ## Releases and deploys
 

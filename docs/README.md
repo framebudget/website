@@ -4,7 +4,7 @@ The landing page and API reference for framebudget. The page is also a demo of t
 
 ## Commands
 
-Run these in `docs/`. The site depends on the published library: `framebudget` in `package.json` is the 0.2.1 release tarball of framebudget/core, pinned by integrity in `package-lock.json` (see the repository `README.md`). The library's source is [github.com/framebudget/core](https://github.com/framebudget/core).
+Run these in `docs/`. The site depends on the published library: `framebudget` in `package.json` is the `framebudget-0.4.0.tgz` asset of the framebudget/core v0.4.0 release, and npm `overrides` point `@framebudget/core` and `@framebudget/react` at the same release's assets, all pinned by integrity in `package-lock.json`. Verify a tarball with `gh release verify-asset v0.4.0 <file> --repo framebudget/core` (see the repository `README.md`). The library's source is [github.com/framebudget/core](https://github.com/framebudget/core).
 
 | Command | What it does |
 | --- | --- |
@@ -16,14 +16,17 @@ Run these in `docs/`. The site depends on the published library: `framebudget` i
 
 ## How it uses framebudget
 
-- `vite.config.ts` inlines `createBootScript({ calibration })` at the top of `<head>` on every page, so the decision is on `<html>` before the first paint. A second small inline script skips the cross-document view transition when `pageTransition` is off. It also renders the static parts (header, footer, dock, device pickers, tables, highlighted code) from `src/render.ts`, so the first paint has its final layout.
-- `src/effects.ts` is the effect registry: name, threshold, cost, flags, and the frame time each effect spends on the reference device. The same `calibration` goes to the boot script and to `configure()` in `src/setup.ts`.
+- `vite.config.ts` inlines `createBootScript({ calibrationDefaults })` at the top of `<head>` on every page, so the decision is on `<html>` before the first paint. A second small inline script skips the cross-document view transition when `pageTransition` is off. It also renders the static parts (header, footer, dock, device pickers, tables, highlighted code) from `src/render.ts`, so the first paint has its final layout.
+- `src/effects.ts` is the effect registry: the numbers (threshold, cost, flags, and the frame time each effect spends on the reference device) and the tier floors come from `../shared/site-effects.json`, which the Worker's automatic calibration also reads; labels, colors and copy live in `src/effects.ts`. The build fails when the two name different effects. The same `calibrationDefaults` go to the boot script and to `configure()` in `src/setup.ts`; nothing site-specific is passed as `calibration`, so the calibration the site fetches from `/api/calibration` refines the thresholds from the next visit. `vite.config.ts` lets the dev server read `../shared/` (`server.fs.allow`).
+- The page shows the thresholds framebudget decides with. The build renders the baseline from `shared/site-effects.json` into the ladder, the simulator's table, the effects registry and the tier floors; `src/thresholds.ts` rewrites them from `budget.snapshot().calibration`, and the simulator's decision column (`src/sim.ts`) reads the same live values.
 - CSS gates effects with `:root[data-framebudget-effects~="name"]`. Scripts subscribe once through `src/state.ts`, which batches every change into one animation frame, and `onEffect(name, fn)` runs only when that effect flips.
 - One `requestAnimationFrame` loop (`src/loop.ts`) runs every animated part. It stops when nothing on screen needs it and while the tab is hidden, and it reports the real gap between frames to the governor (framebudget's own sampler is off with `governor: { auto: false }`).
 - The simulator calls `budget.simulate(score)` and `budget.simulate(null)`. The simulated device lasts for the tab, across pages and reloads, and the dock at the bottom of every page leads back. The load test burns the simulated device's frame time on the main thread and reports it as `loadTest`, so the governor steps effects down for real.
 - `motion` (the WAAPI build, plus its spring generator) and `cuelume` are loaded on idle, and only when an effect that uses them is allowed. Under `prefers-reduced-motion: reduce` nothing moves and `motion` is never fetched.
 
 ## Effects
+
+The baseline in `shared/site-effects.json` (the live thresholds can differ, see above):
 
 | Name | Label | Threshold | Cost | Flags |
 | --- | --- | --- | --- | --- |
