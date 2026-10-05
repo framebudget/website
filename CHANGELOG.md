@@ -4,6 +4,18 @@ Every release of the framebudget website (framebudget.dev), newest first, split 
 
 Website versions are independent of the library's. Until 2026-10-03 the website shipped with the library, from one repository; that history is in the [framebudget CHANGELOG](https://github.com/framebudget/core/blob/main/CHANGELOG.md), up to and including 0.2.1.
 
+## [1.3.0] - 2026-10-05
+
+### Site
+
+No changes.
+
+### Worker
+
+#### Features
+
+- **worker:** calibrate effect thresholds daily ([0d95ab4](https://github.com/framebudget/website/commit/0d95ab408907e76a20a24aaba0b17f0477d6ea40)) ([#9](https://github.com/framebudget/website/pull/9))
+
 ## [1.2.0] - 2026-10-03
 
 ### Site
