@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { analyze, analyzeLab, analyzeLabWork, effectThreshold, labTargetMs, parseEffectMs, percentile, readRows, scoreOf } from "../scripts/calibrate.mjs";
+import { analyze, analyzeLab, analyzeLabWork, effectThreshold, labTargetMs, percentile, readRows, scoreOf } from "../scripts/calibrate.mjs";
 
 const fixture = (name: string) => readFileSync(new URL("fixtures/" + name, import.meta.url), "utf8");
 const REFERENCE = { float: 10800, typed: 219000, alloc: 30900, path: 4860 };
@@ -113,8 +113,9 @@ describe("calibrate", () => {
       // 17 rows: 3 protocol 1, one protocol 2 without baseline work, one without a baseline step, one on another version.
       expect(work()).toMatchObject({ protocolCounts: { 1: 3, 2: 14 }, cal: "provisional-1", runs: 11 });
       expect(work().effects.map((e) => e.name)).toEqual(["all", "blur", "canvasLowRes", "entrances"]);
-      // The drop-based analysis still counts every run with a baseline, protocol 1 included.
-      expect(analyzeLab(rows(), OPTIONS).runs).toBe(15);
+      // The drop-based analysis also uses protocol 2 runs only once any exist: 12 of the 15 runs with a baseline.
+      expect(analyzeLab(rows(), OPTIONS)).toMatchObject({ rows: 17, protocol2Only: true, runs: 12 });
+      expect(analyzeLab(readRows(fixture("lab-export.json")), OPTIONS)).toMatchObject({ protocol2Only: false, runs: 19 });
     });
 
     it("summarizes the cost on the score 100 device next to the current ms, and proposes the median", () => {
@@ -150,10 +151,20 @@ describe("calibrate", () => {
       expect(analyzeLabWork([run(50, 3, 2)], options).effects[0]!.proposedMs).toBe(0);
     });
 
-    it("reads the current ms of every effect from docs/src/effects.ts", () => {
-      expect(parseEffectMs('  { name: "hover", label: "Hover states", threshold: 10, cost: 1, ms: 0.2, color: "#b8c0d0" },\n  { name: "blur", label: "x", cost: 6, ms: 1.5 },')).toEqual({ hover: 0.2, blur: 1.5 });
-      const site = parseEffectMs(readFileSync(new URL("../docs/src/effects.ts", import.meta.url), "utf8"));
-      expect(site).toMatchObject({ hover: 0.2, canvasLowRes: 0.6, blur: 1.5, canvasHiRes: 2.6 });
+    it("counts a device that ran both protocols once in the drop-based analysis", () => {
+      const run = (protocol: number, score: number) => ({
+        cal: "c",
+        protocol,
+        score,
+        refresh_hz: 60,
+        steps: JSON.stringify([
+          { name: "baseline", medianMs: 16.7, p95Ms: 17 },
+          { name: "blur", medianMs: 16.7, p95Ms: 17 },
+        ]),
+      });
+      const options = { ...OPTIONS, minSamples: 1 };
+      expect(analyzeLab([run(1, 40), run(2, 40), run(1, 30)], options)).toMatchObject({ rows: 3, runs: 1, effects: [{ name: "blur", devices: 1, threshold: 40 }] });
+      expect(analyzeLab([run(1, 40), run(1, 30)], options)).toMatchObject({ runs: 2, effects: [{ name: "blur", devices: 2, threshold: 30 }] });
     });
   });
 });

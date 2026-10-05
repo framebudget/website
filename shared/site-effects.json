@@ -1,0 +1,20 @@
+{
+  "tiers": { "Full": 180, "High": 90, "Medium": 49, "Lite": 20 },
+  "effects": {
+    "hover": { "threshold": 10, "cost": 1, "ms": 0.2, "motion": false, "data": false },
+    "counters": { "threshold": 12, "cost": 1, "ms": 0.25, "motion": true, "data": false },
+    "sound": { "threshold": 20, "cost": 1, "ms": 0.3, "motion": false, "data": true },
+    "entrances": { "threshold": 24, "cost": 2, "ms": 0.4, "motion": true, "data": false },
+    "canvasLowRes": { "threshold": 32, "cost": 3, "ms": 0.6, "motion": true, "data": false },
+    "shimmer": { "threshold": 38, "cost": 2, "ms": 0.5, "motion": true, "data": false },
+    "textReveal": { "threshold": 46, "cost": 2, "ms": 0.5, "motion": true, "data": false },
+    "morph": { "threshold": 49, "cost": 2, "ms": 0.4, "motion": true, "data": false },
+    "pageTransition": { "threshold": 62, "cost": 3, "ms": 0.8, "motion": true, "data": false },
+    "springs": { "threshold": 66, "cost": 3, "ms": 0.7, "motion": true, "data": false },
+    "magnetic": { "threshold": 85, "cost": 2, "ms": 0.6, "motion": true, "data": false },
+    "parallax": { "threshold": 90, "cost": 5, "ms": 1.2, "motion": true, "data": false },
+    "spotlight": { "threshold": 112, "cost": 4, "ms": 1, "motion": true, "data": false },
+    "blur": { "threshold": 135, "cost": 6, "ms": 1.5, "motion": false, "data": false },
+    "canvasHiRes": { "threshold": 180, "cost": 8, "ms": 2.6, "motion": true, "data": true }
+  }
+}

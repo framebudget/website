@@ -10,6 +10,8 @@
       "@cloudflare/workers-types"
     ],
     "resolveJsonModule": true,
+    // src/calibration/ imports with .ts extensions so scripts/calibrate.mjs can run it under Node's type stripping.
+    "allowImportingTsExtensions": true,
     "strict": true,
     "noUncheckedIndexedAccess": true,
     "isolatedModules": true,

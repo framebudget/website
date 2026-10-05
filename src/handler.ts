@@ -1,4 +1,7 @@
 import calibration from "../calibration.json";
+import { autoCalibrationOn, runAutoCalibration } from "./calibration/cron.ts";
+import { deepMerge } from "./calibration/patch.ts";
+import { CALIBRATION_LOG_RETENTION_SQL, latestAutoPatch } from "./calibration/store.ts";
 import { deriveClient } from "./client";
 import { readJson, sameOrigin, status, utcDay } from "./http";
 import { CLOSE_EXPIRED_RUNS_SQL, handleLabRuns, handleLabSteps, LAB_RETENTION_SQL, STEPS_PATH } from "./lab";
@@ -11,6 +14,8 @@ export interface Env {
   TURNSTILE_SECRET_KEY: string;
   /** Most lab runs created per UTC day (a var in wrangler.jsonc). */
   LAB_DAILY_CAP: string;
+  /** Kill switch of the daily auto calibration (a var in wrangler.jsonc): "on" runs it and serves its patch. */
+  AUTO_CALIBRATION: string;
 }
 
 export const MAX_BODY_BYTES = 4096;
@@ -74,28 +79,40 @@ async function handleReport(request: Request, env: Env, url: URL, nowMs: number)
   return status(204);
 }
 
-async function handleCalibration(request: Request, url: URL, ctx: ExecutionContext): Promise<Response> {
+async function handleCalibration(request: Request, env: Env, url: URL, ctx: ExecutionContext): Promise<Response> {
   if (request.method !== "GET") return status(405);
   // One cache entry regardless of query string.
   const key = new Request(url.origin + "/api/calibration");
   const cache = caches.default;
   const hit = await cache.match(key);
   if (hit) return hit;
-  const response = new Response(CALIBRATION_BODY, {
+  // calibration.json, with the latest applied auto patch merged in while the kill switch is on.
+  // A D1 failure serves calibration.json alone, uncached, so the next request tries again.
+  let body = CALIBRATION_BODY;
+  let cacheable = true;
+  if (autoCalibrationOn(env)) {
+    try {
+      const patch = await latestAutoPatch(env.DB);
+      if (patch) body = JSON.stringify(deepMerge(calibration, patch));
+    } catch {
+      cacheable = false;
+    }
+  }
+  const response = new Response(body, {
     headers: {
       "Content-Type": "application/json; charset=utf-8",
       "Cache-Control": `public, max-age=${CALIBRATION_MAX_AGE}`,
       "X-Content-Type-Options": "nosniff",
     },
   });
-  ctx.waitUntil(cache.put(key, response.clone()));
+  if (cacheable) ctx.waitUntil(cache.put(key, response.clone()));
   return response;
 }
 
 export async function handleFetch(request: Request, env: Env, ctx: ExecutionContext, nowMs: number): Promise<Response> {
   const url = new URL(request.url);
   if (url.pathname === "/api/report") return handleReport(request, env, url, nowMs);
-  if (url.pathname === "/api/calibration") return handleCalibration(request, url, ctx);
+  if (url.pathname === "/api/calibration") return handleCalibration(request, env, url, ctx);
   if (url.pathname === "/api/lab/runs") return handleLabRuns(request, env, url, nowMs);
   const steps = STEPS_PATH.exec(url.pathname);
   if (steps) return handleLabSteps(request, env, url, steps[1]!, nowMs);
@@ -136,10 +153,25 @@ export function retentionCutoff(nowMs: number): string {
   return utcDay(nowMs - RETENTION_DAYS * DAY_MS);
 }
 
-/** Deletes reports and lab runs past retention, and closes lab runs whose window expired. */
+/** Deletes reports, lab runs and calibration log rows past retention, and closes lab runs whose window expired. */
 export async function runRetention(env: Env, nowMs: number): Promise<void> {
   const cutoff = retentionCutoff(nowMs);
   await env.DB.prepare(RETENTION_SQL).bind(cutoff).run();
   await env.DB.prepare(LAB_RETENTION_SQL).bind(cutoff).run();
   await env.DB.prepare(CLOSE_EXPIRED_RUNS_SQL).bind(Math.floor(nowMs / 1000)).run();
+  await env.DB.prepare(CALIBRATION_LOG_RETENTION_SQL).bind(Date.parse(cutoff + "T00:00:00Z") / 1000).run();
+}
+
+/**
+ * The daily cron: retention, then the auto calibration, isolated: its errors are
+ * swallowed (nothing is logged), so they never fail the job or stop retention.
+ * A day without a calibration_log row is the sign of a failed evaluation.
+ */
+export async function runDaily(env: Env, nowMs: number): Promise<void> {
+  await runRetention(env, nowMs);
+  try {
+    await runAutoCalibration(env, nowMs);
+  } catch {
+    // Isolated: the next day's run tries again.
+  }
 }

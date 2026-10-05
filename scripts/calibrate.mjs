@@ -7,16 +7,25 @@
  *   node scripts/calibrate.mjs export.json [--percentile 50] [--target-fps 55] [--max-under 0.05]
  *
  *   npx wrangler d1 execute framebudget --remote --json --command "SELECT * FROM lab_runs" > lab.json
- *   node scripts/calibrate.mjs --lab lab.json [--target-fps 55] [--max-under 0.05] [--min-samples 10]
+ *   node scripts/calibrate.mjs --lab lab.json [--target-fps 55] [--max-under 0.05] [--min-samples 10] [--current <file>]
  *
- * Plain Node; the only import outside Node is `defaultCalibration` from the
- * installed `framebudget` package (`npm ci` at the repository root), for the current
- * reference rates. Accepts the wrangler JSON export (an array of
- * `{ results: [...] }`), a plain JSON array of rows, or a CSV export with a header row.
+ * Node 22.18 or later; the only import outside Node and this repository is
+ * `defaultCalibration` from the installed `framebudget` package (`npm ci` at the
+ * repository root), for the current reference rates. The threshold search and the
+ * auto calibration come from src/calibration/ (TypeScript, run with Node's type
+ * stripping), the same code the Worker's daily cron runs. Accepts the wrangler JSON
+ * export (an array of `{ results: [...] }`), a plain JSON array of rows, or a CSV
+ * export with a header row.
  */
 import { readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import { defaultCalibration } from "framebudget";
+import { evaluate } from "../src/calibration/evaluate.ts";
+import { stateFromLog } from "../src/calibration/log.ts";
+import { parseAutoPatch } from "../src/calibration/patch.ts";
+import { labTargetMs, lowestThreshold, MAX_UNDER, MIN_DEVICES, TARGET_FPS } from "../src/calibration/search.ts";
+
+export { labTargetMs, lowestThreshold };
 
 export const KERNELS = ["float", "typed", "alloc", "path"];
 
@@ -25,9 +34,14 @@ const USAGE = `Usage: node calibrate.mjs <export.json|export.csv> [options]
 
 Options:
   --lab <file>         Export of the lab_runs table (JSON or CSV): per effect, frame cost over the
-                       baseline by score bucket and a proposed threshold, and, from protocol 2 runs, the
-                       main-thread work per frame on the score 100 device next to the current ms in
-                       docs/src/effects.ts. Can be combined with a reports export.
+                       baseline by score bucket and a proposed threshold (protocol 2 runs only, when
+                       any exist), from protocol 2 runs the main-thread work per frame on the score 100
+                       device next to the current ms in shared/site-effects.json, and the thresholds the
+                       daily auto calibration would apply today. Can be combined with a reports export.
+  --current <file>     With --lab: the auto calibration in force. Either the export of the
+                       calibration_log table (the patch in force and the 7-day cadence, as the cron reads
+                       them) or a patch JSON such as GET /api/calibration (the patch only; cadence
+                       unchecked). Default: no auto patch, every effect at its baseline.
   --percentile <p>     Device percentile (0-100) that becomes score 100. Default 50.
   --target-fps <fps>   Frame rate a device must reach with an effect on. Default 55. With --lab, the
                        p95 frame time must stay within 1000/fps ms at 60 Hz, scaled by the refresh rate.
@@ -132,21 +146,6 @@ export function scoreOf(kernels, reference) {
 }
 
 /**
- * Lowest score T such that, among devices with score >= T, fewer than `maxUnder`
- * missed the target (`missed: true`). Needs `minSamples` devices at or above T.
- */
-export function lowestThreshold(samples, maxUnder, minSamples) {
-  const candidates = [...new Set(samples.map((s) => s.score))].sort((a, b) => a - b);
-  for (const t of candidates) {
-    const above = samples.filter((s) => s.score >= t);
-    if (above.length < minSamples) break;
-    const under = above.filter((s) => s.missed).length / above.length;
-    if (under < maxUnder) return { threshold: t, devices: above.length, under };
-  }
-  return null;
-}
-
-/**
  * Lowest score T such that, among devices with score >= T that ran the effect,
  * fewer than `maxUnder` reported fps under the target. Needs `minSamples` devices.
  */
@@ -247,11 +246,6 @@ function pickCal(rows, requested) {
   return { calCounts, cal: requested ?? Object.entries(calCounts).sort((a, b) => b[1] - a[1])[0]?.[0] ?? null };
 }
 
-/** p95 frame time a device at `refreshHz` must stay within: 1000 / targetFps ms at 60 Hz, scaled by the refresh rate. */
-export function labTargetMs(targetFps, refreshHz) {
-  return (1000 / targetFps) * (60 / refreshHz);
-}
-
 export function bucketLabel(i) {
   const lo = i === 0 ? 0 : LAB_BUCKETS[i - 1];
   return i === LAB_BUCKETS.length ? `${lo}+` : `${lo}-${LAB_BUCKETS[i]}`;
@@ -259,14 +253,17 @@ export function bucketLabel(i) {
 
 /**
  * The lab analysis, as data. Per effect (every step but the baselines), over the
- * runs of one calibration version that measured a baseline:
+ * runs of one calibration version that measured a baseline, protocol 2 runs only
+ * whenever any exist (a device that ran both protocols must not count twice):
  * - cost: the step's median frame time minus the run's baseline median, summarized
  *   per score bucket by its median and p95 across devices;
  * - threshold: the lowest score at which fewer than `maxUnder` of the devices at or
  *   above it had a p95 frame time over labTargetMs, with at least `minSamples` of them.
  */
 export function analyzeLab(rawRows, options) {
-  const rows = rawRows.map(normalizeLab);
+  const all = rawRows.map(normalizeLab);
+  const protocol2Only = all.some((r) => r.protocol >= 2);
+  const rows = protocol2Only ? all.filter((r) => r.protocol >= 2) : all;
   const { calCounts, cal } = pickCal(rows, options.cal);
   const runs = rows.filter((r) => r.cal === cal && r.score !== null && r.refreshHz > 0 && r.steps.has("baseline"));
   const names = [...new Set(runs.flatMap((r) => [...r.steps.keys()]))].filter((n) => !LAB_BASELINES.includes(n)).sort();
@@ -285,14 +282,7 @@ export function analyzeLab(rawRows, options) {
     const found = lowestThreshold(samples, options.maxUnder, options.minSamples);
     return { name, devices: samples.length, buckets, threshold: found?.threshold ?? null, above: found?.devices ?? 0, under: found?.under ?? null };
   });
-  return { rows: rows.length, completed: rows.filter((r) => r.completed).length, calCounts, cal, runs: runs.length, effects };
-}
-
-/** `ms` of every effect in docs/src/effects.ts (its frame time on the score 100 device), by name. */
-export function parseEffectMs(source) {
-  const ms = {};
-  for (const m of source.matchAll(/\{\s*name:\s*"([A-Za-z][A-Za-z0-9]*)"[^\n]*?\bms:\s*([0-9]+(?:\.[0-9]+)?)\b/g)) ms[m[1]] = Number(m[2]);
-  return ms;
+  return { rows: all.length, completed: all.filter((r) => r.completed).length, protocol2Only, calCounts, cal, runs: runs.length, effects };
 }
 
 /**
@@ -302,8 +292,8 @@ export function parseEffectMs(source) {
  * - msAt100: that cost on the score 100 device, cost * score / 100, the inverse of `msAt`
  *   in docs/src/effects.ts;
  * - the median and p90 of msAt100 across devices, next to the effect's current `ms`
- *   (`currentMs`, by name), and the median as the proposed `ms` once at least
- *   `minSamples` devices measured the effect.
+ *   (`currentMs`, by name, from shared/site-effects.json), and the median as the
+ *   proposed `ms` once at least `minSamples` devices measured the effect.
  */
 export function analyzeLabWork(rawRows, options, currentMs = {}) {
   const rows = rawRows.map(normalizeLab);
@@ -342,13 +332,15 @@ function defaultReference(patchUrl) {
   return reference;
 }
 
-/** Current effect ms from the site's sources; none when the file is missing (the script run outside the repository). */
-function currentEffectMs(effectsUrl) {
-  try {
-    return parseEffectMs(readFileSync(effectsUrl, "utf8"));
-  } catch {
-    return {};
-  }
+/**
+ * The auto calibration in force, from the text of --current: a calibration_log export
+ * gives the patch and the cadence exactly as the cron reads them; a patch JSON (or
+ * GET /api/calibration) gives the patch only, and the cadence goes unchecked.
+ */
+export function readCurrent(text) {
+  const rows = readRows(text);
+  if (rows.some((r) => r && typeof r === "object" && "changes" in r && "applied" in r)) return { state: stateFromLog(rows), cadence: true };
+  return { state: { patch: parseAutoPatch(rows[0] ?? null), lastChanged: {} }, cadence: false };
 }
 
 function parseArgs(argv) {
@@ -373,6 +365,7 @@ function parseArgs(argv) {
     else if (arg === "--min-samples") options.minSamples = number(1, 1e9);
     else if (arg === "--cal") options.cal = value();
     else if (arg === "--lab") lab = value();
+    else if (arg === "--current") options.current = value();
     else if (arg === "--reference") {
       options.reference = {};
       for (const pair of value().split(",")) {
@@ -385,6 +378,7 @@ function parseArgs(argv) {
     else file = arg;
   }
   if (!file && !lab) throw new Error("missing export file");
+  if (options.current !== undefined && !lab) throw new Error("--current needs --lab");
   return { file, lab, options };
 }
 
@@ -429,7 +423,7 @@ function printLab(result, options) {
   const out = [];
   out.push(`Lab runs: ${result.rows} (${result.completed} completed)`);
   out.push(`Calibration versions: ${Object.entries(result.calCounts).map(([k, v]) => `${k}=${v}`).join(", ") || "-"}`);
-  out.push(`Runs analyzed (cal ${result.cal}, with a baseline step): ${result.runs}`);
+  out.push(`Runs analyzed (cal ${result.cal}, with a baseline step${result.protocol2Only ? ", protocol 2 or later only" : ""}): ${result.runs}`);
   out.push("");
   out.push("Frame cost over baseline in ms (step median frame time minus the run's baseline median),");
   out.push("median / p95 across devices, devices in parentheses, by device score:");
@@ -464,7 +458,7 @@ function printLabWork(result, options) {
   out.push("");
   out.push("Main-thread work per frame: the step's mean work per frame minus the run's baseline mean, floored at 0,");
   out.push("scaled to the score 100 device as docs/src/effects.ts models it (ms at 100 = cost x score / 100).");
-  out.push(`Median and p90 across devices, the current ms in docs/src/effects.ts, and the median as the proposed ms`);
+  out.push(`Median and p90 across devices, the current ms in shared/site-effects.json, and the median as the proposed ms`);
   out.push(`once at least ${options.minSamples} devices measured the effect.`);
   out.push("  effect                 devices  median     p90  current  proposed");
   for (const e of result.effects) {
@@ -474,6 +468,33 @@ function printLabWork(result, options) {
   out.push("");
   out.push("Notes: work covers the page's JavaScript, style, layout and paint on the main thread; compositor and GPU");
   out.push("work (backdrop blur, for one) is not in it, so such effects read near 0 here. `all` has no current ms of its own.");
+  return out.join("\n");
+}
+
+/** What the daily cron would apply today: the same evaluation, guardrails included. */
+function printAuto(evaluation, current) {
+  const out = [];
+  const x = evaluation.exclusions;
+  out.push("Automatic calibration: what the daily cron would apply today, with its fixed settings (p95 frame time");
+  out.push(`within ${labTargetMs(TARGET_FPS, 60).toFixed(2)} ms at 60 Hz scaled by refresh rate, under ${MAX_UNDER * 100}% of devices over it, at least ${MIN_DEVICES} devices;`);
+  out.push("--target-fps, --max-under, --min-samples and --cal do not apply here).");
+  out.push(
+    `Runs: ${evaluation.runs} counted, ${evaluation.excluded} excluded (refresh rate ${x.refresh}, no baseline ${x.baseline}, busy baseline ${x.busy}, thermal ${x.thermal}), cal ${evaluation.cal ?? "-"}.`,
+  );
+  out.push(
+    current.file === undefined
+      ? "Current auto patch: none, every effect at its baseline."
+      : `Current auto patch: ${current.file}; cadence ${current.cadence ? "from the log" : "not checked (a patch, not the calibration_log export)"}.`,
+  );
+  out.push("  effect                 devices  proposed      from        to  limited by");
+  for (const c of evaluation.changes) {
+    out.push(
+      `  ${c.effect.padEnd(22)} ${String(c.devices).padStart(7)}  ${String(c.proposed ?? "-").padStart(8)}  ${String(c.from).padStart(8)}  ${String(c.to).padStart(8)}  ${c.limitedBy ?? "-"}`,
+    );
+  }
+  if (!evaluation.changes.length) out.push("  (no counted run measured an effect of the registry)");
+  out.push(`Applied: ${evaluation.applied ? "yes" : "no"}`);
+  out.push(`Patch: ${JSON.stringify(evaluation.patch)}`);
   return out.join("\n");
 }
 
@@ -502,8 +523,12 @@ function main() {
   }
   if (lab) {
     const rows = readRows(readFileSync(lab, "utf8"));
+    const registry = JSON.parse(readFileSync(new URL("../shared/site-effects.json", import.meta.url), "utf8"));
+    const currentMs = Object.fromEntries(Object.entries(registry.effects).map(([name, e]) => [name, e.ms]));
     sections.push(printLab(analyzeLab(rows, options), options));
-    sections.push(printLabWork(analyzeLabWork(rows, options, currentEffectMs(new URL("../docs/src/effects.ts", import.meta.url))), options));
+    sections.push(printLabWork(analyzeLabWork(rows, options, currentMs), options));
+    const current = options.current === undefined ? { state: stateFromLog([]), cadence: false } : readCurrent(readFileSync(options.current, "utf8"));
+    sections.push(printAuto(evaluate(rows, registry, current.state, Date.now()), { file: options.current, cadence: current.cadence }));
   }
   console.log(sections.join("\n\n"));
 }
