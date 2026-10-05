@@ -4,6 +4,20 @@ Every release of the framebudget website (framebudget.dev), newest first, split 
 
 Website versions are independent of the library's. Until 2026-10-03 the website shipped with the library, from one repository; that history is in the [framebudget CHANGELOG](https://github.com/framebudget/core/blob/main/CHANGELOG.md), up to and including 0.2.1.
 
+## [1.4.0] - 2026-10-05
+
+### Site
+
+#### Features
+
+- **site:** let auto calibration refine thresholds ([8978003](https://github.com/framebudget/website/commit/8978003d541c1868c5659b4bcba2c421ec0a5aea)) ([#11](https://github.com/framebudget/website/pull/11))
+
+### Worker
+
+#### Features
+
+- **site:** let auto calibration refine thresholds ([8978003](https://github.com/framebudget/website/commit/8978003d541c1868c5659b4bcba2c421ec0a5aea)) ([#11](https://github.com/framebudget/website/pull/11))
+
 ## [1.3.0] - 2026-10-05
 
 ### Site
