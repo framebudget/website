@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { analyze, analyzeLab, analyzeLabWork, effectThreshold, labTargetMs, percentile, readRows, scoreOf } from "../scripts/calibrate.mjs";
+import { analyze, analyzeLab, analyzeLabWork, effectThreshold, percentile, readRows, scoreOf } from "../scripts/calibrate.mjs";
 
 const fixture = (name: string) => readFileSync(new URL("fixtures/" + name, import.meta.url), "utf8");
 const REFERENCE = { float: 10800, typed: 219000, alloc: 30900, path: 4860 };
@@ -73,33 +73,36 @@ describe("calibrate", () => {
       expect(effect("canvasLowRes").buckets.reduce((n, b) => n + b.devices, 0)).toBe(18);
     });
 
-    it("proposes the lowest score that keeps the p95 frame time within the target", () => {
+    it("proposes the lowest score at which devices keep their late frames near their baseline", () => {
       expect(effect("canvasLowRes")).toMatchObject({ devices: 18, threshold: 52, above: 12, under: 0 });
       expect(effect("entrances")).toMatchObject({ threshold: 12, above: 18 });
     });
 
     it("gives no threshold without enough devices at or above one", () => {
       expect(effect("blur")).toMatchObject({ devices: 5, threshold: null });
+      // `all` keeps a p95 of 24.5 ms with 1 of 300 frames late at 60 Hz (no miss), but drops 20% at 120 Hz.
       expect(effect("all")).toMatchObject({ devices: 18, threshold: null });
       expect(analyzeLab(readRows(fixture("lab-export.json")), { ...OPTIONS, minSamples: 5 }).effects.find((e) => e.name === "blur")).toMatchObject({ threshold: 104 });
     });
 
-    it("scales the frame time target by the refresh rate", () => {
-      expect(labTargetMs(55, 60)).toBeCloseTo(1000 / 55, 9);
-      expect(labTargetMs(55, 120)).toBeCloseTo(500 / 55, 9);
-      // p95 12 ms is within the target at 60 Hz and over it at 120 Hz.
-      const run = (score: number, hz: number) => ({
+    it("judges a step by its late frames over the run's baseline, not by its p95 frame time", () => {
+      const run = (score: number, blur: { over: number; frames: number }, baselineFrames = 304) => ({
         cal: "c",
         score,
-        refresh_hz: hz,
+        refresh_hz: 61,
         steps: JSON.stringify([
-          { name: "baseline", medianMs: 8, p95Ms: 9 },
-          { name: "blur", medianMs: 10, p95Ms: 12 },
+          { name: "baseline", medianMs: 16.4, p95Ms: 19, over: 4, frames: baselineFrames },
+          { name: "blur", medianMs: 16.4, p95Ms: 19, ...blur },
+          { name: "baseline-end", medianMs: 16.4, p95Ms: 19, over: 0, frames: baselineFrames },
         ]),
       });
       const options = { ...OPTIONS, minSamples: 1 };
-      expect(analyzeLab([run(40, 120), run(50, 60)], options).effects[0]).toMatchObject({ threshold: 50, above: 1 });
-      expect(analyzeLab([run(40, 60), run(50, 60)], options).effects[0]).toMatchObject({ threshold: 40, above: 2 });
+      // Jitter: p95 19 ms, over a 55 fps target at 61 Hz, and as many late frames as the baseline.
+      expect(analyzeLab([run(40, { over: 3, frames: 303 }), run(50, { over: 0, frames: 306 })], options).effects[0]).toMatchObject({ threshold: 40, above: 2 });
+      // 17 of 246 late (6.9%) against 4 of 608 (0.7%): a miss.
+      expect(analyzeLab([run(40, { over: 17, frames: 246 }), run(50, { over: 0, frames: 306 })], options).effects[0]).toMatchObject({ threshold: 50, above: 1 });
+      // A run without baseline frames is not analyzed, and a step without frames is not a sample.
+      expect(analyzeLab([run(40, { over: 17, frames: 246 }, 0), run(50, { over: 0, frames: 0 })], options)).toMatchObject({ runs: 1, effects: [{ name: "blur", devices: 0, threshold: null }] });
     });
   });
 
@@ -158,8 +161,8 @@ describe("calibrate", () => {
         score,
         refresh_hz: 60,
         steps: JSON.stringify([
-          { name: "baseline", medianMs: 16.7, p95Ms: 17 },
-          { name: "blur", medianMs: 16.7, p95Ms: 17 },
+          { name: "baseline", medianMs: 16.7, p95Ms: 17, over: 0, frames: 300 },
+          { name: "blur", medianMs: 16.7, p95Ms: 17, over: 0, frames: 300 },
         ]),
       });
       const options = { ...OPTIONS, minSamples: 1 };

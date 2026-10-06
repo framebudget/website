@@ -8,7 +8,7 @@ import { guard } from "./guardrails.ts";
 import type { Change, LogState } from "./log.ts";
 import { nextPatch, type AutoPatch } from "./patch.ts";
 import type { CalibrationInput, Exclusions } from "./runs.ts";
-import { labTargetMs, lowestThreshold, MAX_UNDER, MIN_DEVICES, TARGET_FPS, type Sample } from "./search.ts";
+import { lowestThreshold, MAX_UNDER, MIN_DEVICES, missedLateFrames, type Sample } from "./search.ts";
 
 /** shared/site-effects.json */
 export interface SiteRegistry {
@@ -36,7 +36,7 @@ export function evaluate(input: CalibrationInput, registry: SiteRegistry, state:
   for (const step of input.steps) {
     let samples = byEffect.get(step.name);
     if (!samples) byEffect.set(step.name, (samples = new Map()));
-    samples.set(step.run, { score: step.score, missed: step.p95 > labTargetMs(TARGET_FPS, step.refresh_hz) });
+    samples.set(step.run, { score: step.score, missed: missedLateFrames(step.over, step.frames, step.base_over, step.base_frames) });
   }
   const nowSec = Math.floor(nowMs / 1000);
   const floors = Object.values(registry.tiers);

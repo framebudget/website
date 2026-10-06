@@ -4,16 +4,33 @@
  * propose the same numbers from the same runs.
  */
 
-/** Frame rate a device must keep with an effect on, at 60 Hz. */
-export const TARGET_FPS = 55;
-/** Largest tolerated fraction of devices over the target at or above a threshold (strictly below it). */
+/**
+ * Largest tolerated share of late frames (over 1.5 refresh intervals, the step's
+ * `over` / `frames`) with an effect on; reaching exactly this share is not a miss.
+ */
+export const LATE_MAX = 0.05;
+/**
+ * Least rise of that share over the run's own baseline steps for the effect to
+ * count as missed: cheap phones drop a few frames with nothing on, and that
+ * jitter is the device's, not the effect's.
+ */
+export const LATE_OVER_BASELINE = 0.02;
+/** Largest tolerated fraction of devices that missed at or above a threshold (strictly below it). */
 export const MAX_UNDER = 0.05;
 /** Fewest devices at or above a threshold to trust it. */
 export const MIN_DEVICES = 10;
 
-/** p95 frame time a device at `refreshHz` must stay within: 1000 / targetFps ms at 60 Hz, scaled by the refresh rate. */
-export function labTargetMs(targetFps: number, refreshHz: number): number {
-  return (1000 / targetFps) * (60 / refreshHz);
+/**
+ * Whether a device missed with an effect on: more than LATE_MAX of the effect
+ * step's frames were late, and that share is at least LATE_OVER_BASELINE above the
+ * share over the run's `baseline` and `baseline-end` steps pooled (`baseOver` late
+ * of `baseFrames`). The p95 frame time is not used: on cheap phones the gaps
+ * between animation frames jitter, so it sits above a 55 fps target even with no
+ * effect on and no frame dropped. `frames` and `baseFrames` must be positive.
+ */
+export function missedLateFrames(over: number, frames: number, baseOver: number, baseFrames: number): boolean {
+  const rate = over / frames;
+  return rate > LATE_MAX && rate - baseOver / baseFrames >= LATE_OVER_BASELINE;
 }
 
 export interface Sample {
