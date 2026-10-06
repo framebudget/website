@@ -5,7 +5,7 @@ import { CADENCE_SECONDS, guard, tierRange, type GuardInput } from "../src/calib
 import { stateFromLog } from "../src/calibration/log.ts";
 import { deepMerge, parseAutoPatch } from "../src/calibration/patch.ts";
 import { MAX_RUNS, readCalibrationInput } from "../src/calibration/runs.ts";
-import { labTargetMs, lowestThreshold } from "../src/calibration/search.ts";
+import { LATE_MAX, lowestThreshold, missedLateFrames } from "../src/calibration/search.ts";
 import { SqliteD1 } from "./helpers";
 import { fixtureRows, insertLabRows, labRow, type LabRowValues, type RunSpec } from "./lab-rows";
 
@@ -33,22 +33,25 @@ describe("run selection (SQL)", () => {
     { score: 51, baseline: null },
     { score: 52, end: null },
     // 1.5 refresh intervals: 25 ms at 60 Hz, 12.5 ms at 120 Hz.
-    { score: 53, baseline: 25.1 },
-    { score: 54, hz: 120, baseline: 12.6 },
-    { score: 55, hz: 120, baseline: 12.4, end: 12.4 },
+    { score: 53, baseline: { p95: 25.1 } },
+    { score: 54, hz: 120, baseline: { p95: 12.6 } },
+    { score: 55, hz: 120, baseline: { p95: 12.4 }, end: { p95: 12.4 } },
     // baseline-end more than 25% above the baseline.
-    { score: 56, baseline: 16, end: 20.1 },
-    { score: 57, baseline: 16, end: 20 },
+    { score: 56, baseline: { p95: 16 }, end: { p95: 20.1 } },
+    { score: 57, baseline: { p95: 16 }, end: { p95: 20 } },
     { score: 58, hz: 29 },
     { score: 59, hz: 361 },
     { score: 60, hz: 30 },
-    { score: 61, hz: 360, baseline: 4, end: 4 },
+    { score: 61, hz: 360, baseline: { p95: 4 }, end: { p95: 4 } },
+    // No baseline frame to compare late frames with; one baseline step with frames is enough.
+    { score: 62, baseline: { frames: 0 }, end: { frames: 0 } },
+    { score: 63, baseline: { frames: 0 } },
   ];
 
   it("counts clean runs and excludes each kind of bad run", async () => {
-    expect(await countedScores(BAD_RUNS)).toEqual([50, 55, 57, 60, 61]);
+    expect(await countedScores(BAD_RUNS)).toEqual([50, 55, 57, 60, 61, 63]);
     const input = await inputOf(rows(BAD_RUNS.map((s) => ({ effects: { blur: 10 }, ...s }))));
-    expect(input).toMatchObject({ cal: "provisional-1", runs: 5, excluded: 7, exclusions: { refresh: 2, baseline: 2, busy: 2, thermal: 1 } });
+    expect(input).toMatchObject({ cal: "provisional-1", runs: 6, excluded: 8, exclusions: { refresh: 2, baseline: 3, busy: 2, thermal: 1 } });
   });
 
   it("ignores protocol 1, other calibration versions, unfinished and old runs without counting them as excluded", async () => {
@@ -73,12 +76,12 @@ describe("run selection (SQL)", () => {
     expect(await inputOf([])).toEqual({ cal: null, runs: 0, excluded: 0, exclusions: { refresh: 0, baseline: 0, busy: 0, thermal: 0 }, steps: [] });
   });
 
-  it("sends only the registry's effect steps with a numeric p95, as compact rows", async () => {
-    const row = labRow({ score: 50, effects: { blur: 12, notAnEffect: 30, all: 30 } }, 0);
+  it("sends only the registry's effect steps with frames, with the run's pooled baseline late frames, as compact rows", async () => {
+    const row = labRow({ score: 50, baseline: { over: 3 }, end: { over: 2, frames: 305 }, effects: { blur: 12, notAnEffect: 30, all: 30 } }, 0);
     const steps = JSON.parse(String(row.steps));
-    steps.push({ name: "parallax", p95Ms: "slow" });
+    steps.push({ name: "parallax", p95Ms: 17 }, { name: "shimmer", frames: 0, over: 0, p95Ms: 17 }, { name: "counters", frames: 300, over: "some", p95Ms: 17 });
     const input = await inputOf([{ ...row, steps: JSON.stringify(steps) }]);
-    expect(input.steps).toEqual([{ run: 1, score: 50, refresh_hz: 60, name: "blur", p95: 12 }]);
+    expect(input.steps).toEqual([{ run: 1, score: 50, name: "blur", over: 12, frames: 300, base_over: 5, base_frames: 605 }]);
   });
 
   it(`uses the ${MAX_RUNS} most recent counted runs`, async () => {
@@ -111,18 +114,66 @@ describe("threshold search", () => {
     // A slow device at the top keeps every candidate above the limit once fewer than 20 remain.
     expect(lowestThreshold([...samples(15), { score: 1000, missed: true }], 0.05, 10)).toBeNull();
   });
+});
 
-  it("scales the target by the refresh rate", async () => {
-    expect(labTargetMs(55, 60)).toBeCloseTo(1000 / 55, 9);
-    expect(labTargetMs(55, 120)).toBeCloseTo(500 / 55, 9);
-    // p95 12 ms with the effect on: within the target at 60 Hz, over it at 120 Hz.
-    const lab = (hz: number) => rows(Array.from({ length: 12 }, (_, i) => ({ score: 40 + i * 5, hz, baseline: 8, end: 8, effects: { blur: i < 2 ? 12 : 8 } })));
-    const proposed = async (hz: number) => evaluate(await inputOf(lab(hz)), registry, EMPTY, NOW).changes[0]!.proposed;
-    expect(await proposed(60)).toBe(40);
-    // At 120 Hz the two slowest miss: 2 of 12 and 1 of 11 are over 5%, 0 of 10 is not.
-    expect(await proposed(120)).toBe(50);
-    const mixed = rows(Array.from({ length: 14 }, (_, i) => ({ score: 40 + i * 5, hz: i < 2 ? 120 : 60, baseline: 8, end: 8, effects: { blur: 12 } })));
-    expect(evaluate(await inputOf(mixed), registry, EMPTY, NOW).changes[0]).toMatchObject({ proposed: 50, devices: 14 });
+describe("late frames rule", () => {
+  it("misses over 5% late frames that are at least 2 points above the run's baseline", () => {
+    // 6.9% late against a 1.3% baseline: a miss.
+    expect(missedLateFrames(21, 304, 8, 609)).toBe(true);
+    // 6% late against a 5% baseline: under 2 points over it, not a miss.
+    expect(missedLateFrames(18, 300, 30, 600)).toBe(false);
+    // Exactly 5% is not over LATE_MAX, even with a clean baseline; one more frame is.
+    expect(15 / 300).toBe(LATE_MAX);
+    expect(missedLateFrames(15, 300, 0, 600)).toBe(false);
+    expect(missedLateFrames(16, 300, 0, 600)).toBe(true);
+  });
+
+  it("matches the production LG K41s: two misses out of nine steps despite a baseline p95 over a 55 fps target", () => {
+    // Baseline 4/304 and baseline-end 0/305 late, at 61 Hz with a baseline p95 of about 19 ms.
+    const late: Record<string, [number, number]> = {
+      textReveal: [17, 246],
+      all: [42, 245],
+      counters: [1, 306],
+      entrances: [3, 303],
+      canvasLowRes: [1, 304],
+      shimmer: [3, 304],
+      parallax: [3, 305],
+      blur: [0, 306],
+      canvasHiRes: [0, 306],
+    };
+    const missed = Object.entries(late).filter(([, [over, frames]]) => missedLateFrames(over, frames, 4, 609)).map(([name]) => name);
+    expect(missed).toEqual(["textReveal", "all"]);
+  });
+
+  /** Twelve devices at 61 Hz from score 40 to 95; the two slowest get `slow` on blur, the rest 4 of 304 late. */
+  const lab = (baseline: { over: number; frames: number }, slow: { over: number; frames: number }) =>
+    rows(
+      Array.from({ length: 12 }, (_, i): RunSpec => ({
+        score: 40 + i * 5,
+        hz: 61,
+        baseline: { p95: 19, ...baseline },
+        end: { p95: 19, ...baseline },
+        effects: { blur: { p95: 19, ...(i < 2 ? slow : { over: 4, frames: 304 }) } },
+      })),
+    );
+  const proposed = async (labRows: LabRowValues[]) => evaluate(await inputOf(labRows), registry, EMPTY, NOW).changes.find((c) => c.effect === "blur")!;
+
+  it("does not count a jittery device without extra late frames as a miss", async () => {
+    // p95 19 ms in every step, over 1000 / 55 * 60 / 61 = 17.9 ms, and 4 of 304 frames late with or without the effect.
+    expect(await proposed(lab({ over: 4, frames: 304 }, { over: 4, frames: 304 }))).toMatchObject({ proposed: 40, devices: 12 });
+  });
+
+  it("counts a device as a miss from its late frames over its own baseline", async () => {
+    // The two slowest: 21 of 304 late (6.9%) against 4 of 304 in each baseline step (1.3%). 2 of 12 and 1 of 11 are over 5%, 0 of 10 is not.
+    expect(await proposed(lab({ over: 4, frames: 304 }, { over: 21, frames: 304 }))).toMatchObject({ proposed: 50, devices: 12 });
+    // 18 of 300 late (6%) against a 5% baseline: no miss.
+    expect(await proposed(lab({ over: 15, frames: 300 }, { over: 18, frames: 300 }))).toMatchObject({ proposed: 40, devices: 12 });
+  });
+
+  it("excludes a run without baseline frames instead of judging it", async () => {
+    const labRows = lab({ over: 0, frames: 0 }, { over: 60, frames: 300 });
+    const input = await inputOf(labRows);
+    expect(input).toMatchObject({ runs: 0, excluded: 12, exclusions: { baseline: 12 }, steps: [] });
   });
 });
 
@@ -207,7 +258,7 @@ describe("evaluation", () => {
 
   it("proposes and limits every measured effect of the registry", async () => {
     const result = evaluate(await fixture(), registry, EMPTY, NOW);
-    expect(result).toMatchObject({ cal: "provisional-1", runs: 24, excluded: 4, exclusions: { refresh: 1, baseline: 1, busy: 1, thermal: 1 }, applied: true });
+    expect(result).toMatchObject({ cal: "provisional-1", runs: 24, excluded: 5, exclusions: { refresh: 1, baseline: 2, busy: 1, thermal: 1 }, applied: true });
     expect(result.changes).toEqual([
       { effect: "counters", from: 12, to: 10, proposed: 10, devices: 24, limitedBy: null },
       { effect: "entrances", from: 24, to: 20.1, proposed: 10, devices: 24, limitedBy: "tier" },

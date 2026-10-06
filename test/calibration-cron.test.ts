@@ -32,7 +32,7 @@ describe("daily auto calibration", () => {
     await cron(env, NOW + DAY * 1000);
     const rows = db.logRows();
     expect(rows).toHaveLength(2);
-    expect(rows[0]).toMatchObject({ id: 1, created_at: NOW_SEC, cal: "provisional-1", runs: 24, excluded: 4, applied: 1 });
+    expect(rows[0]).toMatchObject({ id: 1, created_at: NOW_SEC, cal: "provisional-1", runs: 24, excluded: 5, applied: 1 });
     expect(JSON.parse(String(rows[0]!.patch))).toEqual({
       effects: { counters: { threshold: 10 }, entrances: { threshold: 20.1 }, canvasLowRes: { threshold: 34 }, shimmer: { threshold: 42 }, parallax: { threshold: 72 }, blur: { threshold: 108 }, canvasHiRes: { threshold: 144 } },
     });

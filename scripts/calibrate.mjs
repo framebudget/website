@@ -7,7 +7,7 @@
  *   node scripts/calibrate.mjs export.json [--percentile 50] [--target-fps 55] [--max-under 0.05]
  *
  *   npx wrangler d1 execute framebudget --remote --json --command "SELECT * FROM lab_runs" > lab.json
- *   node scripts/calibrate.mjs --lab lab.json [--target-fps 55] [--max-under 0.05] [--min-samples 10] [--current <file>]
+ *   node scripts/calibrate.mjs --lab lab.json [--max-under 0.05] [--min-samples 10] [--current <file>]
  *
  * Node 22.18 or later; the only import outside Node and this repository is
  * `defaultCalibration` from the installed `framebudget` package (`npm ci` at the
@@ -26,9 +26,9 @@ import { evaluate } from "../src/calibration/evaluate.ts";
 import { stateFromLog } from "../src/calibration/log.ts";
 import { parseAutoPatch } from "../src/calibration/patch.ts";
 import { MAX_RUNS, readCalibrationInput } from "../src/calibration/runs.ts";
-import { labTargetMs, lowestThreshold, MAX_UNDER, MIN_DEVICES, TARGET_FPS } from "../src/calibration/search.ts";
+import { LATE_MAX, LATE_OVER_BASELINE, lowestThreshold, MAX_UNDER, MIN_DEVICES, missedLateFrames } from "../src/calibration/search.ts";
 
-export { labTargetMs, lowestThreshold };
+export { lowestThreshold, missedLateFrames };
 
 export const KERNELS = ["float", "typed", "alloc", "path"];
 
@@ -37,18 +37,19 @@ const USAGE = `Usage: node calibrate.mjs <export.json|export.csv> [options]
 
 Options:
   --lab <file>         Export of the lab_runs table (JSON or CSV): per effect, frame cost over the
-                       baseline by score bucket and a proposed threshold (protocol 2 runs only, when
-                       any exist), from protocol 2 runs the main-thread work per frame on the score 100
-                       device next to the current ms in shared/site-effects.json, and the thresholds the
-                       daily auto calibration would apply today. Can be combined with a reports export.
+                       baseline by score bucket and a proposed threshold from late frames (protocol 2
+                       runs only, when any exist), from protocol 2 runs the main-thread work per frame
+                       on the score 100 device next to the current ms in shared/site-effects.json, and
+                       the thresholds the daily auto calibration would apply today. Can be combined
+                       with a reports export.
   --current <file>     With --lab: the auto calibration in force. Either the export of the
                        calibration_log table (the patch in force and the 7-day cadence, as the cron reads
                        them) or a patch JSON such as GET /api/calibration (the patch only; cadence
                        unchecked). Default: no auto patch, every effect at its baseline.
   --percentile <p>     Device percentile (0-100) that becomes score 100. Default 50.
-  --target-fps <fps>   Frame rate a device must reach with an effect on. Default 55. With --lab, the
-                       p95 frame time must stay within 1000/fps ms at 60 Hz, scaled by the refresh rate.
-  --max-under <f>      Largest tolerated fraction of devices under the target. Default 0.05.
+  --target-fps <fps>   Reports only: frame rate a device must reach with an effect on. Default 55.
+  --max-under <f>      Largest tolerated fraction of devices that missed: under the target fps in
+                       reports, too many late frames with --lab. Default 0.05.
   --min-samples <n>    Fewest devices at or above a threshold to trust it, and fewest devices behind a
                        proposed effect ms with --lab. Default 10.
   --cal <version>      Calibration version whose scores are the current scale.
@@ -219,10 +220,15 @@ export function analyze(rawRows, options) {
 export const LAB_BUCKETS = [25, 50, 75, 100, 150, 200];
 /** Lab steps that measure no effect: the reference for every other step, and its repeat at the end. */
 const LAB_BASELINES = ["baseline", "baseline-end"];
+/** A share printed as a percentage, for the explanations. */
+const percent = (share) => `${+(share * 100).toFixed(2)}%`;
+/** LATE_OVER_BASELINE in percentage points. */
+const LATE_POINTS = +(LATE_OVER_BASELINE * 100).toFixed(2);
 
 /**
  * Typed view of one lab_runs row. Steps by name; a repeated name keeps the last one.
- * `workMeanMs` is null on protocol 1 steps and on steps without a work sample.
+ * `workMeanMs` is null on protocol 1 steps and on steps without a work sample;
+ * `over` (late frames) and `frames` are null when the step does not carry them.
  */
 export function normalizeLab(row) {
   const steps = new Map();
@@ -230,16 +236,34 @@ export function normalizeLab(row) {
   for (const step of Array.isArray(list) ? list : []) {
     const medianMs = num(step?.medianMs);
     const p95Ms = num(step?.p95Ms);
-    if (typeof step?.name === "string" && medianMs !== null && p95Ms !== null) steps.set(step.name, { medianMs, p95Ms, workMeanMs: num(step.workMeanMs) });
+    if (typeof step?.name === "string" && medianMs !== null && p95Ms !== null) {
+      steps.set(step.name, { medianMs, p95Ms, workMeanMs: num(step.workMeanMs), over: num(step.over), frames: num(step.frames) });
+    }
   }
   return {
     cal: String(row.cal ?? ""),
     protocol: num(row.protocol) ?? 1,
     score: num(row.score),
-    refreshHz: num(row.refresh_hz),
     completed: num(row.completed) === 1,
     steps,
   };
+}
+
+/** A step with a positive frame count and a late frame count: a sample of the late-frame rule. */
+const lateSample = (step) => step !== undefined && step.frames > 0 && step.over !== null;
+
+/** Late frames and frames of a run's baseline steps pooled, as the cron's SQL pools them. */
+function baselineLate(run) {
+  let over = 0;
+  let frames = 0;
+  for (const name of LAB_BASELINES) {
+    const step = run.steps.get(name);
+    if (lateSample(step)) {
+      over += step.over;
+      frames += step.frames;
+    }
+  }
+  return { over, frames };
 }
 
 /** Rows per calibration version, and the version to analyze: `requested`, else the most common one. */
@@ -256,26 +280,35 @@ export function bucketLabel(i) {
 
 /**
  * The lab analysis, as data. Per effect (every step but the baselines), over the
- * runs of one calibration version that measured a baseline, protocol 2 runs only
- * whenever any exist (a device that ran both protocols must not count twice):
+ * runs of one calibration version that measured a baseline with frames, protocol 2
+ * runs only whenever any exist (a device that ran both protocols must not count twice),
+ * and the steps with a positive frame count:
  * - cost: the step's median frame time minus the run's baseline median, summarized
  *   per score bucket by its median and p95 across devices;
  * - threshold: the lowest score at which fewer than `maxUnder` of the devices at or
- *   above it had a p95 frame time over labTargetMs, with at least `minSamples` of them.
+ *   above it missed (missedLateFrames: too many late frames, over the run's own
+ *   baseline), with at least `minSamples` of them.
  */
 export function analyzeLab(rawRows, options) {
   const all = rawRows.map(normalizeLab);
   const protocol2Only = all.some((r) => r.protocol >= 2);
   const rows = protocol2Only ? all.filter((r) => r.protocol >= 2) : all;
   const { calCounts, cal } = pickCal(rows, options.cal);
-  const runs = rows.filter((r) => r.cal === cal && r.score !== null && r.refreshHz > 0 && r.steps.has("baseline"));
+  const runs = rows
+    .filter((r) => r.cal === cal && r.score !== null && r.steps.has("baseline"))
+    .map((r) => ({ ...r, base: baselineLate(r) }))
+    .filter((r) => r.base.frames > 0);
   const names = [...new Set(runs.flatMap((r) => [...r.steps.keys()]))].filter((n) => !LAB_BASELINES.includes(n)).sort();
   const effects = names.map((name) => {
     const samples = runs
-      .filter((r) => r.steps.has(name))
+      .filter((r) => lateSample(r.steps.get(name)))
       .map((r) => {
         const step = r.steps.get(name);
-        return { score: r.score, cost: step.medianMs - r.steps.get("baseline").medianMs, missed: step.p95Ms > labTargetMs(options.targetFps, r.refreshHz) };
+        return {
+          score: r.score,
+          cost: step.medianMs - r.steps.get("baseline").medianMs,
+          missed: missedLateFrames(step.over, step.frames, r.base.over, r.base.frames),
+        };
       });
     const buckets = Array.from({ length: LAB_BUCKETS.length + 1 }, (_, i) => {
       const inBucket = samples.filter((s) => (i === 0 || s.score >= LAB_BUCKETS[i - 1]) && (i === LAB_BUCKETS.length || s.score < LAB_BUCKETS[i]));
@@ -444,7 +477,7 @@ function printLab(result, options) {
   const out = [];
   out.push(`Lab runs: ${result.rows} (${result.completed} completed)`);
   out.push(`Calibration versions: ${Object.entries(result.calCounts).map(([k, v]) => `${k}=${v}`).join(", ") || "-"}`);
-  out.push(`Runs analyzed (cal ${result.cal}, with a baseline step${result.protocol2Only ? ", protocol 2 or later only" : ""}): ${result.runs}`);
+  out.push(`Runs analyzed (cal ${result.cal}, with baseline frames${result.protocol2Only ? ", protocol 2 or later only" : ""}): ${result.runs}`);
   out.push("");
   out.push("Frame cost over baseline in ms (step median frame time minus the run's baseline median),");
   out.push("median / p95 across devices, devices in parentheses, by device score:");
@@ -453,13 +486,11 @@ function printLab(result, options) {
   out.push(`  ${"effect".padEnd(22)} ${labels.map((l) => l.padStart(18)).join("")}`);
   for (const e of result.effects) out.push(`  ${e.name.padEnd(22)} ${e.buckets.map((b) => cell(b).padStart(18)).join("")}`);
   out.push("");
-  out.push(
-    `Proposed thresholds: lowest score where under ${+(options.maxUnder * 100).toFixed(2)}% of the devices at or above it had a p95 frame time`,
-  );
-  out.push(
-    `over ${labTargetMs(options.targetFps, 60).toFixed(2)} ms at 60 Hz (${options.targetFps} fps, scaled by refresh rate: ${labTargetMs(options.targetFps, 120).toFixed(2)} ms at 120 Hz), with at least ${options.minSamples} devices.`,
-  );
-  out.push("  effect                 devices  threshold  at/above  over");
+  out.push(`Proposed thresholds: lowest score where under ${percent(options.maxUnder)} of the devices at or above it missed, with at least ${options.minSamples} devices.`);
+  out.push(`A device missed when more than ${percent(LATE_MAX)} of the step's frames were late (over 1.5 refresh intervals) and that share is`);
+  out.push(`at least ${LATE_POINTS} points above the share in the run's baseline and baseline-end steps together. The p95 frame time is not`);
+  out.push("used: animation frame gaps jitter on cheap phones and keep it over a 55 fps target with no effect on and no frame dropped.");
+  out.push("  effect                 devices  threshold  at/above  missed");
   for (const e of result.effects) {
     const found = e.threshold === null
       ? `not enough devices (${e.devices} ran it, ${options.minSamples} needed at or above a threshold)`
@@ -496,9 +527,11 @@ function printLabWork(result, options) {
 function printAuto(evaluation, current) {
   const out = [];
   const x = evaluation.exclusions;
-  out.push("Automatic calibration: what the daily cron would apply today, with its fixed settings (p95 frame time");
-  out.push(`within ${labTargetMs(TARGET_FPS, 60).toFixed(2)} ms at 60 Hz scaled by refresh rate, under ${MAX_UNDER * 100}% of devices over it, at least ${MIN_DEVICES} devices;`);
-  out.push("--target-fps, --max-under, --min-samples and --cal do not apply here).");
+  out.push("Automatic calibration: what the daily cron would apply today, with its fixed settings (missed: more than");
+  out.push(
+    `${percent(LATE_MAX)} of the step's frames late and at least ${LATE_POINTS} points above the run's baseline steps; under ${percent(MAX_UNDER)} of devices missed, at least ${MIN_DEVICES} devices;`,
+  );
+  out.push("--max-under, --min-samples and --cal do not apply here).");
   out.push(
     `Runs: ${evaluation.runs} counted (the most recent ${MAX_RUNS} at most), ${evaluation.excluded} excluded (refresh rate ${x.refresh}, no baseline ${x.baseline}, busy baseline ${x.busy}, thermal ${x.thermal}), cal ${evaluation.cal ?? "-"}.`,
   );
