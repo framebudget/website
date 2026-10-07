@@ -4,7 +4,7 @@ The website of [framebudget](https://github.com/framebudget/core), the browser l
 
 | Path | What it is |
 | --- | --- |
-| repository root | The Cloudflare Worker (see [The Worker](#the-worker)): `src/`, `test/`, `migrations/`, `scripts/calibrate.mjs`, `wrangler.jsonc`, `calibration.json`. It serves `docs/dist` through its static assets layer, receives the library's anonymous reports (`POST /api/report`, stored in D1), serves the calibration patch (`GET /api/calibration`), stores the opt-in lab runs (`POST /api/lab/runs`, `POST /api/lab/runs/<run>/steps`, stored in D1) and calibrates the site's effect thresholds from them every day (see [Automatic calibration](#automatic-calibration)). |
+| repository root | The Cloudflare Worker (see [The Worker](#the-worker)): `src/`, `test/`, `migrations/`, `scripts/calibrate.mjs`, `wrangler.jsonc`, `calibration.json`. It serves `docs/dist` through its static assets layer, receives the library's anonymous reports from every site that turned sharing on (`POST /api/report`, open to any origin, stored in D1), serves the calibration patch (`GET /api/calibration`, readable by any origin), stores the opt-in lab runs (`POST /api/lab/runs`, `POST /api/lab/runs/<run>/steps`, same-origin only, stored in D1) and calibrates the site's effect thresholds from them every day (see [Automatic calibration](#automatic-calibration)). |
 | `shared/site-effects.json` | The site's effect numbers (threshold, cost, ms, motion and data flags per effect) and tier floors: the baseline the automatic calibration starts from and never drifts far from. The site reads them from this file (`docs/src/effects.ts` adds labels, colors and copy) and ships them as framebudget's `calibrationDefaults`, so the automatic thresholds served by `/api/calibration` refine them. |
 | [`docs/`](docs/README.md) | The site: landing page, API reference, privacy page, the opt-in lab (`/lab`), error pages and the files for AI agents (`llms.txt`, `llm.txt`, `llms-full.txt`). A static Vite build with its own `package.json`, and a live demo of the library. |
 
@@ -83,8 +83,8 @@ npm run typecheck      # src/ with the Workers types, then test/
 One Cloudflare Worker (free plan) for framebudget.dev:
 
 - Serves the landing site (`docs/dist`, the Vite build) through the static assets layer. Static files are served without running the Worker, so they cost nothing and do not count against Worker requests. `html_handling` is `auto-trailing-slash`: `/` serves `index.html`, `/api` and `/privacy` serve `api.html` and `privacy.html`, which is how the site links them. `/privacy.html` redirects to `/privacy`. `not_found_handling` is `404-page`: a path with no matching file gets `404.html` (`docs/404.html`) with status 404, from the asset layer.
-- `POST /api/report`: receives the anonymous report the library sends with `navigator.sendBeacon` and stores one row in D1.
-- `GET /api/calibration`: returns the calibration patch the library fetches at most once a day: `calibration.json` with the latest automatic thresholds merged in.
+- `POST /api/report`: receives the anonymous report the library sends with `navigator.sendBeacon`, from this site and from every other site that turned sharing on (framebudget 0.5.0 and later always send there), and stores one row in D1.
+- `GET /api/calibration`: returns the calibration patch the library fetches at most once a day, from any site: `calibration.json` with the latest automatic thresholds merged in.
 - `POST /api/lab/runs` and `POST /api/lab/runs/<run>/steps`: the opt-in lab (`/lab`). A visitor who consents and passes Turnstile gets one row; each measured step updates that row.
 - A daily cron deletes reports, lab runs and calibration log rows older than 400 days, closes expired lab runs, then calibrates the effect thresholds from the lab runs (see [Automatic calibration](#automatic-calibration)).
 
@@ -100,23 +100,24 @@ The fetch entry (`handleFetchSafely` in `src/handler.ts`) catches any error the 
 
 #### `POST /api/report`
 
-Accepted only when all of these hold, otherwise a bare status with no body:
+Public: any origin may post. Since framebudget 0.5.0, `share` always sends to `https://framebudget.dev/api/report` (plus the site's own `alsoSendTo`, if any), from whatever site runs the library, so there is no origin check here. Everything else is as strict for other sites as for this one. Accepted only when all of these hold, otherwise a bare status with no body:
 
 | Check | Failure |
 | --- | --- |
 | Path is exactly `/api/report` | 404 |
-| Method is `POST` | 405 |
-| `Origin` equals the request origin, or `Origin` is absent and `Sec-Fetch-Site: same-origin` | 403 |
+| Method is `POST` (`OPTIONS` gets the CORS preflight answer below) | 405 |
 | `Content-Type` is `text/plain` (what `sendBeacon` sends for a string) or `application/json` | 415 |
-| `Content-Length` (when present) and the bytes actually read are at most 4096; reading stops past the limit | 413 |
+| `Content-Length` (when present) and the bytes actually read are at most 4096; reading stops past the limit, so a missing or understated `Content-Length` does not help | 413 |
 | Body is UTF-8 JSON and a valid v1 report (`src/validate.ts`) | 400 |
 | Insert succeeds | 503 |
 
 Success is `204 No Content`. Validation is strict: exact keys at every level, `v === 1`, integer scores 0..10000, kernel rates finite and positive, effect and fps names matching `^[A-Za-z][A-Za-z0-9_-]{0,31}$`, at most 64 effects with no duplicates, at most 40 fps sources with whole values 0..1000, known tier and pressure values. Any other `/api/*` path answers a bare 404.
 
+CORS: every answer of `/api/report`, errors included, carries `Access-Control-Allow-Origin: *` and never `Access-Control-Allow-Credentials`. A `sendBeacon` with a string body is a CORS simple request (`text/plain`, no preflight; the browser does not read the answer). A `fetch` with `application/json` from another site sends a preflight first: `OPTIONS /api/report` answers `204` with `Access-Control-Allow-Origin: *`, `Access-Control-Allow-Methods: POST`, `Access-Control-Allow-Headers: Content-Type` and `Access-Control-Max-Age: 86400`, and stores nothing.
+
 #### `GET /api/calibration`
 
-Returns `calibration.json` deep-merged with the patch of the latest applied row of `calibration_log` (the automatic thresholds win; see [Automatic calibration](#automatic-calibration)), with `Cache-Control: public, max-age=3600`, and stores it in the edge cache (`caches.default`) for an hour. Without an applied row, while the kill switch `AUTO_CALIBRATION` is not `on`, or when D1 fails (that answer is not cached), it returns `calibration.json` alone. Other methods get 405.
+Returns `calibration.json` deep-merged with the patch of the latest applied row of `calibration_log` (the automatic thresholds win; see [Automatic calibration](#automatic-calibration)), with `Cache-Control: public, max-age=3600` and `Access-Control-Allow-Origin: *` (any site may read it; the library fetches it without credentials), and stores it in the edge cache (`caches.default`) for an hour. The CORS header is the same for every origin, so it is part of the cached answer and the cache needs no `Vary`. Without an applied row, while the kill switch `AUTO_CALIBRATION` is not `on`, or when D1 fails (that answer is not cached), it returns `calibration.json` alone. Other methods get 405.
 
 `calibration.json` is a JSON file in the repository, bundled into the Worker at build time, instead of a row in D1 or a KV value: hand-made calibration changes go through pull request review, ship with a deploy, and need no extra storage, admin endpoint or secret. It starts as `{}`: the library defaults stay in force. The automatic thresholds are the only part that lives in D1, behind the guardrails of [Automatic calibration](#automatic-calibration). The library applies the remote patch over its defaults and the site's `calibrationDefaults`, and under the site's `calibration` patches (core v0.4.0). The site passes its whole registry and tier floors (`shared/site-effects.json`) as `calibrationDefaults` and nothing site-specific as `calibration`, so the automatic thresholds refine the site's values from a browser's next visit. Changing `reference` changes `calibrationKey`, which invalidates cached scores on every device; only change it with a calibration run, not as a no-op edit.
 
@@ -145,7 +146,7 @@ Checks in order, each failure a bare status with no body:
 | Check | Failure |
 | --- | --- |
 | Method is `POST` | 405 |
-| Same origin, as for `/api/report` | 403 |
+| Same origin: `Origin` equals the request origin, or `Origin` is absent and `Sec-Fetch-Site: same-origin` (no CORS headers, unlike `/api/report`) | 403 |
 | `Content-Type` is `application/json` | 415 |
 | Body at most 4096 bytes | 413 |
 | Body is a valid run (`src/lab-validate.ts`): exact keys at every level, every device key present (`cold`, `warm`, `tickMs`, `cores`, `memoryGb` and each kernel may be `null`), scores 0..10000, kernel rates positive, whole `cores` 1..1024, whole `refreshHz` 1..1000, `dpr` above 0 up to 16, booleans for the flags, `lib` `^[0-9A-Za-z.+-]{1,32}$`, a Turnstile token of 1..2048 characters, `protocol` absent, `1` or `2` | 400 |
@@ -197,7 +198,7 @@ Each row holds exactly what the library's `TelemetryReport` contains, plus coars
 
 A lab run (`lab_runs`) holds the library version, the calibration version, the lab protocol, the device numbers listed under [`POST /api/lab/runs`](#post-apilabruns) (scores, kernel rates, clock resolution, cores, memory, refresh rate, device pixel ratio, viewport width rounded to 100 px, reduced-motion and save-data flags), the same derived fields as a report, and the measured steps (per step: name, effects, frame count, duration, median, p95 and max frame time, frames over 1.5 refresh intervals, and for protocol 2 the mean, median and p95 main-thread work per frame and the frames with a work sample). Until the run closes it also holds the SHA-256 of the write key and the epoch second the run stops accepting steps; both are cleared when the last step arrives or, for abandoned runs, by the daily cron.
 
-Not collected, not stored, not logged, for reports and lab runs alike: IP address, User-Agent string, client hint values, cookies, any identifier, the page URL, referrer, time of day, city or region. The raw headers are read once to derive the coarse fields (`src/client.ts`) and then discarded. Turnstile's siteverify gets the token and the secret, not the IP. Nothing is logged by the Worker.
+Not collected, not stored, not logged, for reports and lab runs alike: IP address, User-Agent string, client hint values, cookies, any identifier, the page URL, referrer, the `Origin` header (so not which site sent a report), time of day, city or region. The raw headers are read once to derive the coarse fields (`src/client.ts`) and then discarded. Turnstile's siteverify gets the token and the secret, not the IP. Nothing is logged by the Worker.
 
 ### Schema
 
@@ -285,10 +286,10 @@ A row from exactly 400 days ago is kept; one day older is deleted. The automatic
 
 ### Free plan notes
 
-- Workers free plan: 100,000 Worker requests per day. Static asset requests are free and unlimited. The Worker runs only for `/api/*` (missing pages get `404.html` from the asset layer); a browser costs at most one Worker request a week for the report (`minIntervalDays: 7`), plus the calibration fetch at most once a day.
-- D1 free plan: 5 GB storage, 100,000 rows written and 5 million rows read per day. A row is about 400 bytes. Every browser reports (`sampleRate: 1`) but at most once a week (`minIntervalDays: 7`), so rows track weekly unique browsers rather than page views; 400 days of retention fit in 5 GB up to about 30,000 reports a day (12 million rows). Past the daily write limit, inserts fail and the Worker answers 503 until the next day; nothing is billed.
+- Workers free plan: 100,000 Worker requests per day. Static asset requests are free and unlimited. The Worker runs only for `/api/*` (missing pages get `404.html` from the asset layer); a browser costs at most one Worker request a week for the report (`minIntervalDays: 7`), plus the calibration fetch at most once a day, for each site it visits that turned sharing on (the library keeps its state per origin). Since framebudget 0.5.0 every such site reports here and fetches the calibration from here, so traffic grows with the library's adoption, not with this site's visitors. The calibration fetch is the larger share: the edge cache saves the D1 read, but every fetch still runs the Worker.
+- D1 free plan: 5 GB storage, 100,000 rows written and 5 million rows read per day. A row is about 400 bytes. This site's visitors all report (`sampleRate: 1`) but at most once a week (`minIntervalDays: 7`), so their rows track weekly unique browsers rather than page views; other sites report from 10% of page views by default (`sampleRate: 0.1`), with the same weekly limit per browser and site. 400 days of retention fit in 5 GB up to about 30,000 reports a day (12 million rows). Past the daily write limit, inserts fail and the Worker answers 503 until the next day (reports and lab runs alike, they share the database); nothing is billed.
 - Lab: `LAB_DAILY_CAP` (a var in `wrangler.jsonc`, `"1000"`) bounds new runs per UTC day. A run is at most 21 row writes (the insert and 20 steps), so the lab adds at most about 21,000 row writes a day, and the cap's `COUNT(*)` reads at most one index entry per run already created that day (about 500,000 rows read a day at the cap). A run is about 4 KB (27 KB at most), so 400 days at the cap take about 1.6 GB. Change the cap in `wrangler.jsonc` and deploy; `"0"` closes the lab. Turnstile guards run creation, and the write key guards each run's steps.
-- No rate limiting binding is configured. The Workers Rate Limiting API page does not state whether the binding is available on the free plan, so it is left out rather than risk a failed deploy. If added later, key it by a constant or by route, never by IP.
+- No rate limiting binding is configured. The Workers Rate Limiting API page does not state whether the binding is available on the free plan, so it is left out rather than risk a failed deploy. If added later, key it by a constant or by route, never by IP. `POST /api/report` is open to every origin, so volume is bounded only by the D1 write limit above; the size limit and strict validation hold for every origin.
 - Automatic calibration: a scheduled invocation on the Workers free plan gets 10 ms of CPU; D1 query time does not count, but everything the Worker parses and computes does, and an evaluation that runs out of CPU fails silently (the error is swallowed, no log row that day). So D1 does the heavy part: the SQL in `src/calibration/runs.ts` parses the steps JSON with `json_each`, applies the exclusions, pools the late frames of each run's baseline steps, keeps the 1000 most recent counted runs (`MAX_RUNS`), and returns only compact rows (run, score, step name, the step's late frames and frames, the run's baseline late frames and frames) for the registry's effects, about 8 rows per run. 1000 runs are plenty for a 5% tail with 10 devices or more at or above a threshold, and the bound keeps the Worker's share flat however large the lab grows: on a development machine, parsing the 8,000 rows of 1000 runs takes about 2 ms and the evaluation about 3.5 ms. D1 reads each run of the 400-day window a few times a day (two queries), well within the 5 million rows read a day even at the full `LAB_DAILY_CAP`.
 
 ## Automatic calibration

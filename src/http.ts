@@ -9,6 +9,16 @@ export function utcDay(ms: number): string {
 export const status = (code: number) => new Response(null, { status: code });
 
 /**
+ * Lets any origin read the response of a public endpoint, without credentials.
+ * Only for answers with nothing private in them: the report and calibration
+ * endpoints. The lab stays same-origin.
+ */
+export function allowAnyOrigin(response: Response): Response {
+  response.headers.set("Access-Control-Allow-Origin", "*");
+  return response;
+}
+
+/**
  * Same-origin check: the Origin header must equal the request origin. Some
  * browsers omit Origin on same-origin beacons; Sec-Fetch-Site then vouches.
  */
