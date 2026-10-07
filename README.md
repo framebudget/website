@@ -83,10 +83,10 @@ npm run typecheck      # src/ with the Workers types, then test/
 One Cloudflare Worker (free plan) for framebudget.dev:
 
 - Serves the landing site (`docs/dist`, the Vite build) through the static assets layer. Static files are served without running the Worker, so they cost nothing and do not count against Worker requests. `html_handling` is `auto-trailing-slash`: `/` serves `index.html`, `/api` and `/privacy` serve `api.html` and `privacy.html`, which is how the site links them. `/privacy.html` redirects to `/privacy`. `not_found_handling` is `404-page`: a path with no matching file gets `404.html` (`docs/404.html`) with status 404, from the asset layer.
-- `POST /api/report`: receives the anonymous report the library sends with `navigator.sendBeacon`, from this site and from every other site that turned sharing on (framebudget 0.5.0 and later always send there), and stores one row in D1.
+- `POST /api/report`: receives the anonymous report the library sends with `navigator.sendBeacon`, from this site and from every other site that turned sharing on (framebudget 0.5.0 and later always send there), and stores one row in D1, within a burst limit and a daily budget (see [Rate limits](#rate-limits)).
 - `GET /api/calibration`: returns the calibration patch the library fetches at most once a day, from any site: `calibration.json` with the latest automatic thresholds merged in.
 - `POST /api/lab/runs` and `POST /api/lab/runs/<run>/steps`: the opt-in lab (`/lab`). A visitor who consents and passes Turnstile gets one row; each measured step updates that row.
-- A daily cron deletes reports, lab runs and calibration log rows older than 400 days, closes expired lab runs, then calibrates the effect thresholds from the lab runs (see [Automatic calibration](#automatic-calibration)).
+- A daily cron deletes reports, their daily counts, lab runs and calibration log rows older than 400 days, closes expired lab runs, then calibrates the effect thresholds from the lab runs (see [Automatic calibration](#automatic-calibration)).
 
 The data exists to calibrate the score scale (reference rates) and the effect thresholds on real devices.
 
@@ -100,20 +100,35 @@ The fetch entry (`handleFetchSafely` in `src/handler.ts`) catches any error the 
 
 #### `POST /api/report`
 
-Public: any origin may post. Since framebudget 0.5.0, `share` always sends to `https://framebudget.dev/api/report` (plus the site's own `alsoSendTo`, if any), from whatever site runs the library, so there is no origin check here. Everything else is as strict for other sites as for this one. Accepted only when all of these hold, otherwise a bare status with no body:
+Public: any origin may post. Since framebudget 0.5.0, `share` always sends to `https://framebudget.dev/api/report` (plus the site's own `alsoSendTo`, if any), from whatever site runs the library, so there is no origin check here. Everything else is as strict for other sites as for this one. Accepted only when all of these hold, checked in this order, otherwise a bare status with no body (a 429 also carries `Retry-After`):
 
 | Check | Failure |
 | --- | --- |
 | Path is exactly `/api/report` | 404 |
 | Method is `POST` (`OPTIONS` gets the CORS preflight answer below) | 405 |
 | `Content-Type` is `text/plain` (what `sendBeacon` sends for a string) or `application/json` | 415 |
+| Under the burst limit (`REPORT_LIMIT`, 300 calls a minute), checked before the body is read | 429, `Retry-After: 60` |
 | `Content-Length` (when present) and the bytes actually read are at most 4096; reading stops past the limit, so a missing or understated `Content-Length` does not help | 413 |
 | Body is UTF-8 JSON and a valid v1 report (`src/validate.ts`) | 400 |
+| Fewer than `REPORT_DAILY_CAP` reports stored today (UTC) | 429, `Retry-After`: the seconds to the next UTC midnight |
 | Insert succeeds | 503 |
 
 Success is `204 No Content`. Validation is strict: exact keys at every level, `v === 1`, integer scores 0..10000, kernel rates finite and positive, effect and fps names matching `^[A-Za-z][A-Za-z0-9_-]{0,31}$`, at most 64 effects with no duplicates, at most 40 fps sources with whole values 0..1000, known tier and pressure values. Any other `/api/*` path answers a bare 404.
 
 CORS: every answer of `/api/report`, errors included, carries `Access-Control-Allow-Origin: *` and never `Access-Control-Allow-Credentials`. A `sendBeacon` with a string body is a CORS simple request (`text/plain`, no preflight; the browser does not read the answer). A `fetch` with `application/json` from another site sends a preflight first: `OPTIONS /api/report` answers `204` with `Access-Control-Allow-Origin: *`, `Access-Control-Allow-Methods: POST`, `Access-Control-Allow-Headers: Content-Type` and `Access-Control-Max-Age: 86400`, and stores nothing.
+
+#### Rate limits
+
+`POST /api/report` is open to every origin, and reports share one D1 database with the lab, so a flood that used up the free plan's 100,000 rows written a day would also make the lab answer 503 until midnight UTC. Two layers bound it; the preflight, `GET /api/calibration` and the lab are outside both.
+
+1. Burst limit: the Workers Rate Limiting binding `REPORT_LIMIT` (`ratelimits` in `wrangler.jsonc`, `"simple": { "limit": 300, "period": 60 }`), called after the method and content type checks and before the body is read. Past it: 429 with `Retry-After: 60`, nothing read from or written to D1. Cloudflare counts it per location and approximately (it is eventually consistent, and a probe on this account let through more calls than its limit), so it smooths bursts but is not a hard bound.
+2. Daily budget, the hard bound: `REPORT_DAILY_CAP` (a var in `wrangler.jsonc`, `"6000"`) reports stored per UTC day, counted in `report_days`. The insert and the count are one `db.batch`, which D1 runs as one transaction, and both statements write only while the day's count is below the cap (`INSERT ... SELECT ... WHERE COALESCE((SELECT n FROM report_days WHERE day = ?), 0) < ?`). So exactly `REPORT_DAILY_CAP` reports are stored a day, concurrent requests included, and once the cap is reached a rejected report writes 0 rows (it reads 3). Past it: 429 with `Retry-After` set to the seconds to the next UTC midnight, when the count starts again at 0.
+
+The burst limit's key is the constant `"report"`: all senders share one bucket. Keying it by IP, or by anything else about the sender, would break the privacy page's promise that no IP is used, and Cloudflare's own Rate Limiting docs advise against IP keys (many users share one IP). The cost is that a flood also delays honest reports, which the daily budget does anyway.
+
+Visitors never notice either limit: the library sends with `sendBeacon`, which ignores the answer, so a 429 is silent. That report is lost, and the browser does not send another before `minIntervalDays` (it records the report as sent once the beacon is queued).
+
+To change them, edit `wrangler.jsonc` and deploy: `simple.limit` (calls) and `simple.period` (10 or 60 seconds) of `REPORT_LIMIT`, and `REPORT_DAILY_CAP` (`"0"` stops storing reports; a value that is not a whole number falls back to 6000). If `period` changes, change the `Retry-After: 60` in `src/handler.ts` with it. Raise the cap only with the write budget in [Free plan notes](#free-plan-notes) in view. Neither layer saves Worker requests: a flood still counts against the 100,000 Worker requests a day.
 
 #### `GET /api/calibration`
 
@@ -273,11 +288,21 @@ Index: `created_day` (the daily cap counts today's rows; retention deletes by da
 
 Index: `created_at` (retention). One small row a day.
 
+`migrations/0005_report_days.sql`, table `report_days` (the daily budget of `POST /api/report`; see [Rate limits](#rate-limits)):
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `day` | TEXT PK | UTC `YYYY-MM-DD` |
+| `n` | INTEGER | Reports stored that day |
+
+One row a day, incremented in the same transaction as each stored report.
+
 ### Retention
 
 The cron trigger (`17 3 * * *`, daily) runs, with the UTC day 400 days before the run:
 
 - `DELETE FROM reports WHERE created_day < ?`
+- `DELETE FROM report_days WHERE day < ?`
 - `DELETE FROM lab_runs WHERE created_day < ?`
 - `UPDATE lab_runs SET write_key_hash = NULL, open_until = NULL WHERE open_until < ?` (the current epoch second): runs the page abandoned are closed, so no time of day survives a run.
 - `DELETE FROM calibration_log WHERE created_at < ? AND id <> COALESCE((SELECT MAX(id) FROM calibration_log WHERE applied = 1), 0)` (the epoch second that UTC day starts): the latest applied row stays however old, since it holds the patch in force.
@@ -287,9 +312,12 @@ A row from exactly 400 days ago is kept; one day older is deleted. The automatic
 ### Free plan notes
 
 - Workers free plan: 100,000 Worker requests per day. Static asset requests are free and unlimited. The Worker runs only for `/api/*` (missing pages get `404.html` from the asset layer); a browser costs at most one Worker request a week for the report (`minIntervalDays: 7`), plus the calibration fetch at most once a day, for each site it visits that turned sharing on (the library keeps its state per origin). Since framebudget 0.5.0 every such site reports here and fetches the calibration from here, so traffic grows with the library's adoption, not with this site's visitors. The calibration fetch is the larger share: the edge cache saves the D1 read, but every fetch still runs the Worker.
-- D1 free plan: 5 GB storage, 100,000 rows written and 5 million rows read per day. A row is about 400 bytes. This site's visitors all report (`sampleRate: 1`) but at most once a week (`minIntervalDays: 7`), so their rows track weekly unique browsers rather than page views; other sites report from 10% of page views by default (`sampleRate: 0.1`), with the same weekly limit per browser and site. 400 days of retention fit in 5 GB up to about 30,000 reports a day (12 million rows). Past the daily write limit, inserts fail and the Worker answers 503 until the next day (reports and lab runs alike, they share the database); nothing is billed.
-- Lab: `LAB_DAILY_CAP` (a var in `wrangler.jsonc`, `"1000"`) bounds new runs per UTC day. A run is at most 21 row writes (the insert and 20 steps), so the lab adds at most about 21,000 row writes a day, and the cap's `COUNT(*)` reads at most one index entry per run already created that day (about 500,000 rows read a day at the cap). A run is about 4 KB (27 KB at most), so 400 days at the cap take about 1.6 GB. Change the cap in `wrangler.jsonc` and deploy; `"0"` closes the lab. Turnstile guards run creation, and the write key guards each run's steps.
-- No rate limiting binding is configured. The Workers Rate Limiting API page does not state whether the binding is available on the free plan, so it is left out rather than risk a failed deploy. If added later, key it by a constant or by route, never by IP. `POST /api/report` is open to every origin, so volume is bounded only by the D1 write limit above; the size limit and strict validation hold for every origin.
+- D1 free plan: 5 GB storage, 100,000 rows written and 5 million rows read per day. A row is about 400 bytes. This site's visitors all report (`sampleRate: 1`) but at most once a week (`minIntervalDays: 7`), so their rows track weekly unique browsers rather than page views; other sites report from 10% of page views by default (`sampleRate: 0.1`), with the same weekly limit per browser and site. 400 days of retention fit in 5 GB up to about 30,000 reports a day (12 million rows); at `REPORT_DAILY_CAP` (6,000) they take about 2.4 million rows, about 1 GB. Past the daily write limit, inserts fail and the Worker answers 503 until the next day (reports and lab runs alike, they share the database); nothing is billed. The two caps below keep a day under that limit.
+- Lab: `LAB_DAILY_CAP` (a var in `wrangler.jsonc`, `"1000"`) bounds new runs per UTC day. A run costs 3 rows written to create (the row, its `id` primary key index and the `created_day` index), 1 per step (steps touch no indexed column), so at most 23 with 20 steps, plus 1 when the cron closes an abandoned run: at most 24,000 rows written a day at the cap (about 13 a run, 13,000 a day, for a typical run of about 10 steps). The cap's `COUNT(*)` reads at most one index entry per run already created that day (about 500,000 rows read a day at the cap). A run is about 4 KB (27 KB at most), so 400 days at the cap take about 1.6 GB. Change the cap in `wrangler.jsonc` and deploy; `"0"` closes the lab. Turnstile guards run creation, and the write key guards each run's steps.
+- Reports: D1 bills one extra row written per index an insert touches. A stored report writes 5 rows (the row and the 4 indexes of `reports`) plus 1 for its `report_days` count (2 for the day's first report, which also writes the primary key index), so 6. Measured with `wrangler dev --local` (workerd's D1 returns `meta.rows_written`): 5 for the insert, 1 for the count (2 on the day's first), and 0 written (3 read) for a report rejected at the cap. At the cap that is 6,000 x 6 = 36,000 rows written a day.
+- Retention deletes cost writes too. Counted like inserts (a row plus its indexes; workerd's local D1 reports 1 per deleted row, so this is the pessimistic count), deleting a day at both caps 400 days later takes 6,000 x 5 = 30,000 for reports and 1,000 x 3 = 3,000 for lab runs; `report_days` and `calibration_log` add a few rows.
+- Daily write budget at both caps, worst case (full lab runs, a day at the cap 400 days earlier): 36,000 (reports) + 24,000 (lab) + 30,000 + 3,000 (retention) + under 10 (counts, calibration log) = about 93,000 rows written, under the 100,000 of the free plan. With typical lab runs it is about 82,000. Reads stay far under 5 million: a stored or rejected report reads at most 4 rows, and Worker requests are capped at 100,000 a day. Do not raise `REPORT_DAILY_CAP` or `LAB_DAILY_CAP` on the free plan without redoing this sum.
+- When real adoption needs more reports than `REPORT_DAILY_CAP`, move to Workers Paid ($5 a month), whose D1 allowance is counted per month (50 million rows written, 25 billion rows read included, then billed per million), and raise `REPORT_DAILY_CAP` there: every 1,000 reports a day add about 11,000 rows written a day once retention deletes them too (about 330,000 a month). Raise the burst limit's `simple.limit` with it so that a normal busy minute is not cut. On the paid plan the cap becomes a bound on cost rather than on availability.
 - Automatic calibration: a scheduled invocation on the Workers free plan gets 10 ms of CPU; D1 query time does not count, but everything the Worker parses and computes does, and an evaluation that runs out of CPU fails silently (the error is swallowed, no log row that day). So D1 does the heavy part: the SQL in `src/calibration/runs.ts` parses the steps JSON with `json_each`, applies the exclusions, pools the late frames of each run's baseline steps, keeps the 1000 most recent counted runs (`MAX_RUNS`), and returns only compact rows (run, score, step name, the step's late frames and frames, the run's baseline late frames and frames) for the registry's effects, about 8 rows per run. 1000 runs are plenty for a 5% tail with 10 devices or more at or above a threshold, and the bound keeps the Worker's share flat however large the lab grows: on a development machine, parsing the 8,000 rows of 1000 runs takes about 2 ms and the evaluation about 3.5 ms. D1 reads each run of the 400-day window a few times a day (two queries), well within the 5 million rows read a day even at the full `LAB_DAILY_CAP`.
 
 ## Automatic calibration
@@ -419,7 +447,7 @@ npx wrangler d1 migrations apply framebudget --remote   # only when migrations/ 
 npm run deploy                                          # wrangler deploy: the Worker plus docs/dist
 ```
 
-The lab's Turnstile secret is a Worker secret, already set on the deployed Worker; to rotate it, run `npx wrangler secret put TURNSTILE_SECRET_KEY` (never commit it). `LAB_DAILY_CAP` ships with `wrangler.jsonc`.
+The lab's Turnstile secret is a Worker secret, already set on the deployed Worker; to rotate it, run `npx wrangler secret put TURNSTILE_SECRET_KEY` (never commit it). `LAB_DAILY_CAP`, `REPORT_DAILY_CAP` and the `REPORT_LIMIT` rate limiting binding ship with `wrangler.jsonc`. The report route reads `report_days`, so `migrations/0005_report_days.sql` must be applied before the deploy that adds it (otherwise every report answers 503).
 
 `framebudget.dev` and `www.framebudget.dev` are custom domains of the Worker, so the zone must be on the same Cloudflare account. Each host is its own origin: a page on `www` reports to `www`. New migrations go in `migrations/` and are applied with `npx wrangler d1 migrations apply framebudget --remote` before the deploy that needs them.
 

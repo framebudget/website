@@ -1,6 +1,16 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import calibration from "../calibration.json";
-import { handleFetch, handleFetchSafely, MAX_BODY_BYTES, retentionCutoff, runRetention } from "../src/handler";
+import {
+  DEFAULT_REPORT_DAILY_CAP,
+  handleFetch,
+  handleFetchSafely,
+  MAX_BODY_BYTES,
+  REPORT_LIMIT_KEY,
+  retentionCutoff,
+  runRetention,
+  secondsToUtcMidnight,
+  type Env,
+} from "../src/handler";
 import { CALIBRATION_LOG_RETENTION_SQL } from "../src/calibration/store.ts";
 import worker from "../src/index";
 import { beacon, CHROME_ANDROID_UA, installCache, makeCtx, makeEnv, ORIGIN, validReport } from "./helpers";
@@ -174,6 +184,128 @@ describe("POST /api/report", () => {
   });
 });
 
+describe("POST /api/report rate limits", () => {
+  /** Sends `request` with `env` at `nowMs` (NOW by default). */
+  const post = (env: Env, request = beacon(), nowMs = NOW) => handleFetch(request, env, makeCtx().ctx, nowMs);
+
+  it("keys the burst limit by a constant, whoever sends", async () => {
+    const { env, limiter } = makeEnv();
+    await post(env, from(beacon({ headers: { "cf-connecting-ip": "198.51.100.1" } }), OTHER_ORIGIN, "cross-site"));
+    await post(env, beacon({ headers: { "cf-connecting-ip": "198.51.100.2" } }));
+    expect(limiter.keys).toEqual([REPORT_LIMIT_KEY, REPORT_LIMIT_KEY]);
+    expect(REPORT_LIMIT_KEY).toBe("report");
+  });
+
+  it("answers 429 past the burst limit, readable by any origin, with Retry-After 60 and nothing read or written", async () => {
+    const { env, db, limiter } = makeEnv();
+    limiter.success = false;
+    const response = await post(env, from(beacon(), OTHER_ORIGIN, "cross-site"));
+    expect(response.status).toBe(429);
+    expect(await response.text()).toBe("");
+    expect(Object.fromEntries(response.headers)).toEqual({ "access-control-allow-origin": "*", "retry-after": "60" });
+    expect(db.statements).toEqual([]);
+    expect(db.rows()).toEqual([]);
+  });
+
+  it("checks method and content type before the burst limit, and the body after it", async () => {
+    const { env, limiter } = makeEnv();
+    limiter.success = false;
+    expect((await post(env, beacon({ method: "GET" }))).status).toBe(405);
+    expect((await post(env, beacon({ headers: { "content-type": "application/x-www-form-urlencoded" } }))).status).toBe(415);
+    expect(limiter.keys).toEqual([]);
+    expect((await post(env, beacon({ body: "{" }))).status).toBe(429);
+    expect((await post(env, beacon({ body: paddedBody(MAX_BODY_BYTES + 1) }))).status).toBe(429);
+    limiter.success = true;
+    expect((await post(env, beacon({ body: "{" }))).status).toBe(400);
+    expect((await post(env, beacon({ body: paddedBody(MAX_BODY_BYTES + 1) }))).status).toBe(413);
+  });
+
+  it("leaves the preflight, the calibration and the lab out of the burst limit", async () => {
+    installCache();
+    const { env, limiter } = makeEnv();
+    limiter.success = false;
+    const preflight = new Request(ORIGIN + "/api/report", { method: "OPTIONS", headers: { origin: OTHER_ORIGIN } });
+    expect((await post(env, preflight)).status).toBe(204);
+    expect((await post(env, new Request(ORIGIN + "/api/calibration"))).status).toBe(200);
+    expect((await post(env, new Request(ORIGIN + "/api/lab/runs", { method: "POST", headers: { origin: OTHER_ORIGIN } }))).status).toBe(403);
+    expect(limiter.keys).toEqual([]);
+  });
+
+  it("stores exactly REPORT_DAILY_CAP reports a day, then answers 429 until UTC midnight and writes nothing", async () => {
+    const { env, db } = makeEnv();
+    env.REPORT_DAILY_CAP = "3";
+    for (let i = 0; i < 3; i++) expect((await post(env)).status).toBe(204);
+    expect(db.rows()).toHaveLength(3);
+    expect(db.reportDays()).toEqual([{ day: "2026-10-03", n: 3 }]);
+    const changes = db.totalChanges();
+    const response = await post(env, from(beacon(), OTHER_ORIGIN, "cross-site"));
+    expect(response.status).toBe(429);
+    expect(await response.text()).toBe("");
+    // NOW is 23:59:30 UTC.
+    expect(Object.fromEntries(response.headers)).toEqual({ "access-control-allow-origin": "*", "retry-after": "30" });
+    expect(db.totalChanges()).toBe(changes);
+    expect(db.rows()).toHaveLength(3);
+    expect(db.reportDays()).toEqual([{ day: "2026-10-03", n: 3 }]);
+  });
+
+  it("never passes the cap under concurrent requests", async () => {
+    const { env, db } = makeEnv();
+    env.REPORT_DAILY_CAP = "5";
+    const statuses = await Promise.all(Array.from({ length: 12 }, () => post(env).then((r) => r.status)));
+    expect(statuses.filter((s) => s === 204)).toHaveLength(5);
+    expect(statuses.filter((s) => s === 429)).toHaveLength(7);
+    expect(db.rows()).toHaveLength(5);
+    expect(db.reportDays()).toEqual([{ day: "2026-10-03", n: 5 }]);
+  });
+
+  it("starts every UTC day at 0", async () => {
+    const { env, db } = makeEnv();
+    env.REPORT_DAILY_CAP = "2";
+    for (let i = 0; i < 3; i++) await post(env);
+    expect((await post(env)).status).toBe(429);
+    // 30 seconds later it is 2026-10-04 UTC.
+    expect((await post(env, beacon(), NOW + 30000)).status).toBe(204);
+    expect(db.reportDays()).toEqual([
+      { day: "2026-10-03", n: 2 },
+      { day: "2026-10-04", n: 1 },
+    ]);
+    expect(db.rows().map((r) => r.created_day)).toEqual(["2026-10-03", "2026-10-03", "2026-10-04"]);
+  });
+
+  it("closes reports with a cap of 0 and falls back to the default cap when the var is not a whole number", async () => {
+    const closed = makeEnv();
+    closed.env.REPORT_DAILY_CAP = "0";
+    expect((await post(closed.env)).status).toBe(429);
+    expect(closed.db.rows()).toEqual([]);
+    for (const value of ["lots", "1.5", "-1"]) {
+      const { env, db } = makeEnv();
+      env.REPORT_DAILY_CAP = value;
+      db.db.prepare("INSERT INTO report_days (day, n) VALUES ('2026-10-03', ?)").run(DEFAULT_REPORT_DAILY_CAP - 1);
+      expect((await post(env)).status).toBe(204);
+      expect((await post(env)).status).toBe(429);
+    }
+  });
+
+  it("answers 503 and stores nothing when D1 fails", async () => {
+    const { env, db } = makeEnv();
+    env.DB.batch = async () => {
+      throw new Error("D1 down");
+    };
+    const response = await post(env);
+    expect(response.status).toBe(503);
+    expect(response.headers.get("access-control-allow-origin")).toBe("*");
+    expect(db.rows()).toEqual([]);
+  });
+
+  it.each([
+    [Date.UTC(2026, 9, 3), 86400],
+    [Date.UTC(2026, 9, 3, 12), 43200],
+    [Date.UTC(2026, 9, 3, 23, 59, 59, 500), 1],
+  ])("tells a client at %d to retry in %d seconds", (nowMs, seconds) => {
+    expect(secondsToUtcMidnight(nowMs)).toBe(seconds);
+  });
+});
+
 describe("GET /api/calibration", () => {
   let store: Map<string, Response>;
   beforeEach(() => {
@@ -317,6 +449,14 @@ describe("retention", () => {
     expect(db.rows().map((r) => r.created_day)).toEqual(["2025-08-29", "2025-08-30", "2026-10-03"]);
   });
 
+  it("deletes the daily report counts past retention", async () => {
+    const { env, db } = makeEnv();
+    const insert = db.db.prepare("INSERT INTO report_days (day, n) VALUES (?, 1)");
+    for (const day of ["2025-08-28", "2025-08-29", "2026-10-03"]) insert.run(day);
+    await runRetention(env, NOW);
+    expect(db.reportDays().map((r) => r.day)).toEqual(["2025-08-29", "2026-10-03"]);
+  });
+
   it("uses the UTC day of the run", async () => {
     // 00:30 UTC: the cutoff is 400 days before this UTC day, not the previous local day.
     expect(retentionCutoff(Date.UTC(2026, 9, 3, 0, 30))).toBe("2025-08-29");
@@ -324,6 +464,7 @@ describe("retention", () => {
     await runRetention(env, NOW);
     expect(db.statements).toEqual([
       { sql: "DELETE FROM reports WHERE created_day < ?", params: ["2025-08-29"] },
+      { sql: "DELETE FROM report_days WHERE day < ?", params: ["2025-08-29"] },
       { sql: "DELETE FROM lab_runs WHERE created_day < ?", params: ["2025-08-29"] },
       { sql: "UPDATE lab_runs SET write_key_hash = NULL, open_until = NULL WHERE open_until < ?", params: [Math.floor(NOW / 1000)] },
       { sql: CALIBRATION_LOG_RETENTION_SQL, params: [Date.UTC(2025, 7, 29) / 1000] },
