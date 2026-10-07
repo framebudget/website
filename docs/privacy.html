@@ -5,7 +5,7 @@
 <!-- framebudget:boot -->
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Privacy: what framebudget.dev measures</title>
-<meta name="description" content="framebudget.dev shares anonymous frame measurements, at most once a week per browser, to calibrate framebudget on real devices. What is collected, what is not, how long it is kept, and how to say no.">
+<meta name="description" content="framebudget.dev and every site that turns on framebudget's sharing send anonymous frame measurements to framebudget.dev, at most once a week per browser and site, to calibrate framebudget on real devices. What is collected, what is not, how long it is kept, and how to say no.">
 <meta name="theme-color" content="#0f1225">
 <!-- fb:seo:privacy -->
 <link rel="icon" href="/logo/favicon.svg" type="image/svg+xml">
@@ -22,7 +22,7 @@
 <main id="main" class="shell docs">
   <header class="docs__head">
     <h1 class="page-title" data-reveal="blur"><span class="w" style="--i:0">Privacy</span></h1>
-    <p class="docs__lede">This site measures how fast your device draws frames and shares the numbers, anonymously, so framebudget's scores and thresholds can be calibrated on real devices instead of one desktop. Nothing here identifies you, and you can say no.</p>
+    <p class="docs__lede">This site measures how fast your device draws frames and shares the numbers, anonymously, so framebudget's scores and thresholds can be calibrated on real devices instead of one desktop. Other sites that use framebudget and turned its sharing on send the same anonymous reports here too. Nothing in them identifies you, and you can say no.</p>
     <div class="docs__live panel">
       <p class="panel__label">Your choice in this browser</p>
       <p class="share-control__state" role="status" data-share-state>This browser shares anonymous measurements, unless Global Privacy Control or Save-Data is on.</p>
@@ -35,6 +35,7 @@
       <p class="toc__title">On this page</p>
       <ul>
         <li><a href="#collected">What is collected</a></li>
+        <li><a href="#other-sites">Reports from other sites</a></li>
         <li><a href="#not-collected">What is not</a></li>
         <li><a href="#when">When it is sent</a></li>
         <li><a href="#retention">Storage and retention</a></li>
@@ -47,7 +48,7 @@
     <div class="docs__content">
       <section id="collected" aria-labelledby="collected-title">
         <h2 id="collected-title">What is collected</h2>
-        <p>At most one report per browser each week, sent to <code>/api/report</code> on this site. It holds only these numbers and names:</p>
+        <p>At most one report per browser and site each week, sent to <code>/api/report</code> on this site, from this site and from <a href="#other-sites">other sites that turned sharing on</a>. It holds only these numbers and names:</p>
         <table class="table">
           <thead><tr><th scope="col">Field</th><th scope="col">What it is</th></tr></thead>
           <tbody>
@@ -73,14 +74,27 @@
         </table>
       </section>
 
+      <section id="other-sites" aria-labelledby="other-sites-title">
+        <h2 id="other-sites-title">Reports from other sites</h2>
+        <p>framebudget is a library that other sites use. It never shares anything by default: a site's developer has to turn sharing on. When they do, the browsers of that site's visitors send the reports described above to <code>https://framebudget.dev/api/report</code>, and that destination cannot be changed or removed. A site may also send the same report to an address of its own; what happens there is up to that site and its privacy policy.</p>
+        <ul class="docs__list">
+          <li><strong>What is in a report:</strong> exactly the fields listed above, nothing more. The server derives the same coarse fields from the request (engine and major version, operating system family, mobile or desktop, country, the day in UTC) and stores neither the IP address, the user agent string, nor the <code>Origin</code> header, so not even which site sent a report.</li>
+          <li><strong>What is not:</strong> no cookies, no identifiers, no page addresses, referrers or time of day, as listed below.</li>
+          <li><strong>How often:</strong> only a sample of page views reports, 10% unless the site chose otherwise, and each browser reports at most once every 7 days per site (sooner only when the calibration changes). Those sites also fetch <code>/api/calibration</code> from here at most once a day, without cookies.</li>
+          <li><strong>Never</strong> when Global Privacy Control or Save-Data is on, on any site, or while a device is simulated or a tier is forced.</li>
+          <li><strong>Saying no:</strong> Global Privacy Control or Save-Data stops it on every site. The <strong>Don't share</strong> choice on this page covers framebudget.dev only, since it lives in this site's storage; another site turns sharing off with its own setting (<code>share: null</code>), so ask that site or use Global Privacy Control.</li>
+        </ul>
+        <p>These reports are kept and used exactly like this site's own: same database, same 400 days, only to calibrate framebudget, and only aggregated numbers are ever published.</p>
+      </section>
+
       <section id="not-collected" aria-labelledby="not-collected-title">
         <h2 id="not-collected-title">What is not collected</h2>
         <ul>
           <li>No IP address. Your browser sends it with every request, as it does to any site, but it is not stored.</li>
           <li>No user agent string, only the engine, its major version and the operating system family derived from it.</li>
           <li>No cookies, no identifiers, no fingerprint, nothing that links one visit to another.</li>
-          <li>No page addresses, referrers or search terms, and no time of day.</li>
-          <li>No analytics or advertising scripts. The report goes to this site only.</li>
+          <li>No page addresses, referrers or search terms, no time of day, and not which site a report came from.</li>
+          <li>No analytics or advertising scripts. On this site, the report goes to this site only.</li>
         </ul>
       </section>
 
@@ -90,7 +104,7 @@
           <li>At most once every 7 days per browser (sooner only when the calibration changes), as one <code>navigator.sendBeacon</code> request when the page is hidden or closed, after it has loaded. The date of the last report stays in your browser's local storage, next to the effects framebudget learned to skip.</li>
           <li>Never when Global Privacy Control or Save-Data is on. Both are checked again right before sending.</li>
           <li>Never while a device is simulated or a tier is forced, since those numbers would not describe your device.</li>
-          <li>Never after you choose <strong>Don't share</strong>, here or on the notice at the bottom of the home page. The choice is kept in this browser's <code>localStorage</code>.</li>
+          <li>Never after you choose <strong>Don't share</strong>, here or on the notice at the bottom of the home page. The choice is kept in this browser's <code>localStorage</code> for framebudget.dev, and covers this site only: <a href="#other-sites">other sites</a> follow their own setting, and Global Privacy Control or Save-Data.</li>
         </ul>
         <p>The site also fetches <code>/api/calibration</code> at most once a day, without cookies, to use updated reference numbers on your next visit. It follows the same rules.</p>
       </section>

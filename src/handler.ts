@@ -3,7 +3,7 @@ import { autoCalibrationOn, runAutoCalibration } from "./calibration/cron.ts";
 import { deepMerge } from "./calibration/patch.ts";
 import { CALIBRATION_LOG_RETENTION_SQL, latestAutoPatch } from "./calibration/store.ts";
 import { deriveClient } from "./client";
-import { readJson, sameOrigin, status, utcDay } from "./http";
+import { allowAnyOrigin, readJson, status, utcDay } from "./http";
 import { CLOSE_EXPIRED_RUNS_SQL, handleLabRuns, handleLabSteps, LAB_RETENTION_SQL, STEPS_PATH } from "./lab";
 import { KERNELS, validateReport, type Report } from "./validate";
 
@@ -22,6 +22,12 @@ export const MAX_BODY_BYTES = 4096;
 export const RETENTION_DAYS = 400;
 const CALIBRATION_MAX_AGE = 3600;
 const DAY_MS = 86400000;
+/** Preflight answer of POST /api/report, cached by the browser for a day. */
+const REPORT_PREFLIGHT = {
+  "Access-Control-Allow-Methods": "POST",
+  "Access-Control-Allow-Headers": "Content-Type",
+  "Access-Control-Max-Age": "86400",
+};
 
 const CALIBRATION_BODY = JSON.stringify(calibration);
 
@@ -64,9 +70,20 @@ export function reportRow(report: Report, request: Request, nowMs: number): (str
   ];
 }
 
-async function handleReport(request: Request, env: Env, url: URL, nowMs: number): Promise<Response> {
+/**
+ * Public: the library sends reports here from every site that turned sharing
+ * on, so there is no origin check. A sendBeacon string is a CORS simple request
+ * (text/plain, no preflight); OPTIONS answers the preflight of a fetch that
+ * sends application/json. Method, content type, size and schema stay strict.
+ * Every answer, errors included, may be read by any origin.
+ */
+async function handleReport(request: Request, env: Env, nowMs: number): Promise<Response> {
+  if (request.method === "OPTIONS") return allowAnyOrigin(new Response(null, { status: 204, headers: REPORT_PREFLIGHT }));
+  return allowAnyOrigin(await storeReport(request, env, nowMs));
+}
+
+async function storeReport(request: Request, env: Env, nowMs: number): Promise<Response> {
   if (request.method !== "POST") return status(405);
-  if (!sameOrigin(request, url)) return status(403);
   const body = await readJson(request, MAX_BODY_BYTES, ["text/plain", "application/json"]);
   if (body instanceof Response) return body;
   const report = validateReport(body.json);
@@ -79,6 +96,11 @@ async function handleReport(request: Request, env: Env, url: URL, nowMs: number)
   return status(204);
 }
 
+/**
+ * Public: the library fetches it without credentials from every site that
+ * turned sharing on, so any origin may read it. The header is part of the
+ * cached response, the same for every origin, so the cache needs no Vary.
+ */
 async function handleCalibration(request: Request, env: Env, url: URL, ctx: ExecutionContext): Promise<Response> {
   if (request.method !== "GET") return status(405);
   // One cache entry regardless of query string.
@@ -102,6 +124,7 @@ async function handleCalibration(request: Request, env: Env, url: URL, ctx: Exec
     headers: {
       "Content-Type": "application/json; charset=utf-8",
       "Cache-Control": `public, max-age=${CALIBRATION_MAX_AGE}`,
+      "Access-Control-Allow-Origin": "*",
       "X-Content-Type-Options": "nosniff",
     },
   });
@@ -111,7 +134,7 @@ async function handleCalibration(request: Request, env: Env, url: URL, ctx: Exec
 
 export async function handleFetch(request: Request, env: Env, ctx: ExecutionContext, nowMs: number): Promise<Response> {
   const url = new URL(request.url);
-  if (url.pathname === "/api/report") return handleReport(request, env, url, nowMs);
+  if (url.pathname === "/api/report") return handleReport(request, env, nowMs);
   if (url.pathname === "/api/calibration") return handleCalibration(request, env, url, ctx);
   if (url.pathname === "/api/lab/runs") return handleLabRuns(request, env, url, nowMs);
   const steps = STEPS_PATH.exec(url.pathname);
