@@ -186,7 +186,7 @@ worker.addEventListener("message", (e) =&gt; {
 
       <section id="calibration" aria-labelledby="calibration-title">
         <h2 id="calibration-title">Calibration</h2>
-        <p>Every number that turns measurements into decisions lives in <code>defaultCalibration</code>: reference rates, effect thresholds and costs, tier floors, hysteresis, hardware caps, pressure factors, the fallback score, the maximum age of a cached score and the clean visits before a retry. Precedence: built-in numbers, then your <code>calibrationDefaults</code>, then a calibration fetched from your server, then your <code>calibration</code> overrides. Every value is validated. Ship the values your server may refine as defaults, and pin with <code>calibration</code> only what must hold.</p>
+        <p>Every number that turns measurements into decisions lives in <code>defaultCalibration</code>: reference rates, effect thresholds and costs, tier floors, hysteresis, hardware caps, pressure factors, the fallback score, the maximum age of a cached score and the clean visits before a retry. Precedence: built-in numbers, then your <code>calibrationDefaults</code>, then the calibration fetched while sharing is on (from framebudget.dev, or from your <code>calibrationUrl</code>), then your <code>calibration</code> overrides. Every value is validated. Ship the values the fetched calibration may refine as defaults, and pin with <code>calibration</code> only what must hold.</p>
 <pre class="code"><code data-lang="ts">configure({
   calibrationDefaults: {
     effects: { parallax: { threshold: 80 } }, // refined by calibrationUrl
@@ -200,22 +200,29 @@ worker.addEventListener("message", (e) =&gt; {
 
       <section id="telemetry" aria-labelledby="telemetry-title">
         <h2 id="telemetry-title">Telemetry</h2>
-        <p>Off by default, with no default endpoint. Only the site developer can turn it on:</p>
-<pre class="code"><code data-lang="ts">configure({
+        <p>Off by default. Only the site developer can turn it on. Once on, sampled reports always go to framebudget.dev, where they calibrate framebudget on real devices, from any site; that destination cannot be changed or removed. <code>alsoSendTo</code> adds one endpoint of your own, which gets the same report.</p>
+<pre class="code"><code data-lang="ts">configure({ share: true }); // on, with the defaults below
+
+configure({
   share: {
-    endpoint: "https://example.com/framebudget",
-    sampleRate: 0.1, // share of page views that report
-    minIntervalDays: 7, // days a browser waits before reporting again
-    calibrationUrl: "https://example.com/framebudget/calibration.json",
+    sampleRate: 0.1, // share of page views that report (default 0.1)
+    minIntervalDays: 7, // days a browser waits before reporting again (default 7)
+    alsoSendTo: "https://example.com/framebudget", // optional: one extra endpoint, same report
+    calibrationUrl: "https://example.com/calibration.json", // optional: replaces framebudget.dev's calibration
   },
-});</code></pre>
+});
+
+configure({ share: null }); // or false: off, also after load</code></pre>
         <ul class="docs__list">
+          <li><strong>Where:</strong> <code>https://framebudget.dev/api/report</code>, always, plus <code>alsoSendTo</code> when set. The calibration comes from <code>https://framebudget.dev/api/calibration</code> unless <code>calibrationUrl</code> points elsewhere. Both framebudget.dev endpoints accept any origin.</li>
           <li><strong>Sent:</strong> calibration version, rounded scores, kernel rates, clock resolution, cores, memory, pressure, the reduced-motion preference, the tier, allowed and stepped-down effects, median fps per source.</li>
           <li><strong>Never sent:</strong> identifiers, cookies, the URL, the user agent, timestamps.</li>
-          <li><strong>When:</strong> one <code>navigator.sendBeacon</code> call when the page is hidden, after load, for sampled page views only.</li>
-          <li><strong>How often:</strong> at most one report per browser every <code>minIntervalDays</code> days (default 7, 0 turns it off), sooner only for a new calibration version. The date of the last report stays in the same <code>localStorage</code> entry.</li>
+          <li><strong>When:</strong> one <code>navigator.sendBeacon</code> call per destination when the page is hidden, after load, for sampled page views only.</li>
+          <li><strong>How often:</strong> at most one report per browser every <code>minIntervalDays</code> days (default 7, 0 turns it off), sooner only for a new calibration version. The date of the last report stays in the same <code>localStorage</code> entry. The calibration is fetched at most once a day, after load, without credentials, and applied from the next visit.</li>
           <li><strong>Never</strong> under Global Privacy Control or Save-Data, while a tier is forced, or while a device is simulated.</li>
-          <li>The beacon still carries what every request carries, such as the IP address and the <code>Origin</code> header.</li>
+          <li><strong>Letting visitors say no:</strong> <code>configure({ share: null })</code> turns sharing off at any time, also after load. Keep the visitor's choice yourself and pass <code>share: null</code> on later visits.</li>
+          <li>The beacon still carries what every request carries, such as the IP address and the <code>Origin</code> header. framebudget.dev keeps only coarse facts derived from the request (engine and major version, OS family, mobile or desktop, country, the day in UTC) and stores neither the IP address, the user agent string nor the <code>Origin</code>: see <a href="/privacy">what it keeps</a>.</li>
+          <li>Upgrading from 0.4: <code>endpoint</code> is now <code>alsoSendTo</code>, and it adds a destination instead of being the only one.</li>
         </ul>
       </section>
 

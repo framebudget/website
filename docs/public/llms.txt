@@ -6,7 +6,7 @@
 - Entry points: `framebudget` (the `budget` object, `configure`, `createBudget`, `Tier`, `defaultCalibration`), `framebudget/boot` (`bootScript`, `createBootScript`), `framebudget/react` (`useBudget`, `useTier`, `BudgetProvider`), `framebudget/panel` (`mountPanel`).
 - An inline boot script runs a 2 ms CPU benchmark before the first paint and writes the decision on `<html>` as `data-framebudget` (the tier) and `data-framebudget-effects` (the allowed effects), so CSS can gate effects with `html[data-framebudget-effects~="parallax"]`.
 - Each effect has a score threshold (100 is the reference phone), a relative frame cost, and optional `motion` and `data` flags. A runtime governor watches real frame gaps and steps the most expensive effects down. Local learning remembers effects that stuttered on the device.
-- On the server, `budget.allows()` answers `false` and the tier is `Lite`. Telemetry is off by default, has no default endpoint, and is never sent under Global Privacy Control or Save-Data.
+- On the server, `budget.allows()` answers `false` and the tier is `Lite`. Telemetry is off by default and only the site developer can turn it on (`configure({ share: true })`). Once on, sampled anonymous reports always go to `https://framebudget.dev/api/report` (plus one optional endpoint of your own, `alsoSendTo`) and the calibration comes from `https://framebudget.dev/api/calibration` (or `calibrationUrl`); both accept any origin. Nothing is sent under Global Privacy Control or Save-Data. Since 0.5.0, `endpoint` is renamed `alsoSendTo`.
 
 ## Docs
 
@@ -21,4 +21,4 @@
 ## Optional
 
 - [Source code](https://github.com/framebudget/core): TypeScript, MIT license.
-- [Privacy on framebudget.dev](https://framebudget.dev/privacy): what the site's own telemetry collects and how to opt out.
+- [Privacy on framebudget.dev](https://framebudget.dev/privacy): what framebudget.dev keeps from the anonymous reports, its own visitors' and those of every site that turned sharing on, and how to opt out.
