@@ -17,6 +17,8 @@ export class SqliteD1 {
   prepare(sql: string) {
     return {
       bind: (...params: SQLInputValue[]) => ({
+        sql,
+        params,
         run: async () => {
           this.statements.push({ sql, params });
           const result = this.db.prepare(sql).run(...params);
@@ -34,6 +36,31 @@ export class SqliteD1 {
     };
   }
 
+  /** Like D1's batch: the statements run in order in one transaction, rolled back whole when one fails. */
+  async batch(bound: { sql: string; params: SQLInputValue[] }[]) {
+    this.db.exec("BEGIN");
+    try {
+      const results = bound.map(({ sql, params }) => {
+        this.statements.push({ sql, params });
+        return { success: true, meta: { changes: Number(this.db.prepare(sql).run(...params).changes) } };
+      });
+      this.db.exec("COMMIT");
+      return results;
+    } catch (error) {
+      this.db.exec("ROLLBACK");
+      throw error;
+    }
+  }
+
+  /** Rows inserted, updated or deleted since the database opened, migrations included. */
+  totalChanges(): number {
+    return Number(this.db.prepare("SELECT total_changes() AS n").get()?.n);
+  }
+
+  reportDays(): Record<string, unknown>[] {
+    return this.db.prepare("SELECT * FROM report_days ORDER BY day").all() as Record<string, unknown>[];
+  }
+
   rows(): Record<string, unknown>[] {
     return this.db.prepare("SELECT * FROM reports ORDER BY id").all() as Record<string, unknown>[];
   }
@@ -47,16 +74,32 @@ export class SqliteD1 {
   }
 }
 
+/** The REPORT_LIMIT stand-in: answers `success`, which a test may flip, and records every key it is called with. */
+export function makeLimiter() {
+  const limiter = {
+    success: true,
+    keys: [] as string[],
+    limit: async ({ key }: RateLimitOptions) => {
+      limiter.keys.push(key);
+      return { success: limiter.success };
+    },
+  };
+  return limiter;
+}
+
 /** `assets` answers env.ASSETS.fetch; by default every asset is missing. */
 export function makeEnv(db = new SqliteD1(), assets: (request: Request) => Promise<Response> = async () => new Response("not found", { status: 404 })) {
   const assetRequests: Request[] = [];
+  const limiter = makeLimiter();
   const env = {
-    // Only prepare/bind/run/first/all are used by the Worker; the SQLite stand-in covers exactly that.
+    // Only prepare/bind/run/first/all and batch are used by the Worker; the SQLite stand-in covers exactly that.
     DB: db as unknown as D1Database,
     // Cloudflare's always-passing test secret; tests stub fetch to siteverify.
     TURNSTILE_SECRET_KEY: "1x0000000000000000000000000000000AA",
     LAB_DAILY_CAP: "1000",
     AUTO_CALIBRATION: "on",
+    REPORT_LIMIT: limiter,
+    REPORT_DAILY_CAP: "6000",
     ASSETS: {
       fetch: async (request: Request) => {
         assetRequests.push(request);
@@ -64,7 +107,7 @@ export function makeEnv(db = new SqliteD1(), assets: (request: Request) => Promi
       },
     } as unknown as Fetcher,
   } satisfies Env;
-  return { env, db, assetRequests };
+  return { env, db, assetRequests, limiter };
 }
 
 export function makeCtx() {

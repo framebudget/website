@@ -52,14 +52,18 @@ async function readLimited(body: ReadableStream<Uint8Array>, limit: number): Pro
   return out;
 }
 
+/** True when the Content-Type (parameters ignored, any case) is one of `types`. */
+export function hasContentType(request: Request, types: readonly string[]): boolean {
+  return types.includes((request.headers.get("content-type") ?? "").split(";")[0]!.trim().toLowerCase());
+}
+
 /**
  * Reads a JSON body: 415 unless the Content-Type is one of `types`, 413 past
  * `limit` bytes (declared or actually read), 400 when missing or not UTF-8 JSON.
  * Returns the parsed value, or the bare failure response.
  */
 export async function readJson(request: Request, limit: number, types: readonly string[]): Promise<{ json: unknown } | Response> {
-  const type = (request.headers.get("content-type") ?? "").split(";")[0]!.trim().toLowerCase();
-  if (!types.includes(type)) return status(415);
+  if (!hasContentType(request, types)) return status(415);
   const length = request.headers.get("content-length");
   if (length !== null && !(Number(length) <= limit)) return status(413);
   if (!request.body) return status(400);

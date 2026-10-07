@@ -3,7 +3,7 @@ import { autoCalibrationOn, runAutoCalibration } from "./calibration/cron.ts";
 import { deepMerge } from "./calibration/patch.ts";
 import { CALIBRATION_LOG_RETENTION_SQL, latestAutoPatch } from "./calibration/store.ts";
 import { deriveClient } from "./client";
-import { allowAnyOrigin, readJson, status, utcDay } from "./http";
+import { allowAnyOrigin, hasContentType, readJson, status, utcDay } from "./http";
 import { CLOSE_EXPIRED_RUNS_SQL, handleLabRuns, handleLabSteps, LAB_RETENTION_SQL, STEPS_PATH } from "./lab";
 import { KERNELS, validateReport, type Report } from "./validate";
 
@@ -16,12 +16,21 @@ export interface Env {
   LAB_DAILY_CAP: string;
   /** Kill switch of the daily auto calibration (a var in wrangler.jsonc): "on" runs it and serves its patch. */
   AUTO_CALIBRATION: string;
+  /** Burst limit of POST /api/report (a ratelimits binding in wrangler.jsonc), keyed by a constant. */
+  REPORT_LIMIT: RateLimit;
+  /** Most reports stored per UTC day (a var in wrangler.jsonc). */
+  REPORT_DAILY_CAP: string;
 }
 
 export const MAX_BODY_BYTES = 4096;
 export const RETENTION_DAYS = 400;
 const CALIBRATION_MAX_AGE = 3600;
 const DAY_MS = 86400000;
+/** Used when REPORT_DAILY_CAP is missing or not a whole number. */
+export const DEFAULT_REPORT_DAILY_CAP = 6000;
+/** The one key of the burst limit: never anything about the sender (no IP, see the privacy page). */
+export const REPORT_LIMIT_KEY = "report";
+const REPORT_TYPES = ["text/plain", "application/json"];
 /** Preflight answer of POST /api/report, cached by the browser for a day. */
 const REPORT_PREFLIGHT = {
   "Access-Control-Allow-Methods": "POST",
@@ -31,14 +40,29 @@ const REPORT_PREFLIGHT = {
 
 const CALIBRATION_BODY = JSON.stringify(calibration);
 
+/** True while the UTC day (first ?) has stored fewer reports than the cap (second ?). */
+const UNDER_DAILY_CAP = "COALESCE((SELECT n FROM report_days WHERE day = ?), 0) < ?";
+
+/** Inserts the report only while the day is under the cap. */
 const INSERT_SQL = `INSERT INTO reports (
   created_day, cal, score, cold, warm, tick_ms,
   kernel_float, kernel_typed, kernel_alloc, kernel_path,
   cores, memory_gb, pressure, reduced_motion, tier, effects, stepped, fps, fps_main,
   engine, engine_version, os, mobile, country
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+) SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+WHERE ${UNDER_DAILY_CAP}`;
+
+/**
+ * Counts the report under the same condition. Batched after INSERT_SQL, which
+ * does not touch report_days, so both see the same count and write together or
+ * not at all.
+ */
+const COUNT_SQL = `INSERT INTO report_days (day, n) SELECT ?, 1
+WHERE ${UNDER_DAILY_CAP}
+ON CONFLICT (day) DO UPDATE SET n = n + 1`;
 
 export const RETENTION_SQL = "DELETE FROM reports WHERE created_day < ?";
+export const REPORT_DAYS_RETENTION_SQL = "DELETE FROM report_days WHERE day < ?";
 
 /** Column values in INSERT_SQL order. */
 export function reportRow(report: Report, request: Request, nowMs: number): (string | number | null)[] {
@@ -75,21 +99,47 @@ export function reportRow(report: Report, request: Request, nowMs: number): (str
  * on, so there is no origin check. A sendBeacon string is a CORS simple request
  * (text/plain, no preflight); OPTIONS answers the preflight of a fetch that
  * sends application/json. Method, content type, size and schema stay strict.
- * Every answer, errors included, may be read by any origin.
+ * Every answer, errors included, may be read by any origin. Volume is bounded
+ * by a burst limit (REPORT_LIMIT) and a daily budget (REPORT_DAILY_CAP); past
+ * either the answer is 429 with Retry-After and nothing is stored.
  */
 async function handleReport(request: Request, env: Env, nowMs: number): Promise<Response> {
   if (request.method === "OPTIONS") return allowAnyOrigin(new Response(null, { status: 204, headers: REPORT_PREFLIGHT }));
   return allowAnyOrigin(await storeReport(request, env, nowMs));
 }
 
+function reportDailyCap(env: Env): number {
+  const cap = Number(env.REPORT_DAILY_CAP);
+  return Number.isInteger(cap) && cap >= 0 ? cap : DEFAULT_REPORT_DAILY_CAP;
+}
+
+/** Whole seconds from `nowMs` to the next UTC midnight, when the daily budget resets. */
+export function secondsToUtcMidnight(nowMs: number): number {
+  return Math.ceil(((Math.floor(nowMs / DAY_MS) + 1) * DAY_MS - nowMs) / 1000);
+}
+
 async function storeReport(request: Request, env: Env, nowMs: number): Promise<Response> {
   if (request.method !== "POST") return status(405);
-  const body = await readJson(request, MAX_BODY_BYTES, ["text/plain", "application/json"]);
+  if (!hasContentType(request, REPORT_TYPES)) return status(415);
+  // Retry-After is the period of the binding in wrangler.jsonc.
+  if (!(await env.REPORT_LIMIT.limit({ key: REPORT_LIMIT_KEY })).success) {
+    return new Response(null, { status: 429, headers: { "Retry-After": "60" } });
+  }
+  const body = await readJson(request, MAX_BODY_BYTES, REPORT_TYPES);
   if (body instanceof Response) return body;
   const report = validateReport(body.json);
   if (!report) return status(400);
+  const day = utcDay(nowMs);
+  const cap = reportDailyCap(env);
   try {
-    await env.DB.prepare(INSERT_SQL).bind(...reportRow(report, request, nowMs)).run();
+    // One batch is one transaction: the report and its count are written together, or neither is.
+    const [inserted] = await env.DB.batch([
+      env.DB.prepare(INSERT_SQL).bind(...reportRow(report, request, nowMs), day, cap),
+      env.DB.prepare(COUNT_SQL).bind(day, day, cap),
+    ]);
+    if (inserted!.meta.changes !== 1) {
+      return new Response(null, { status: 429, headers: { "Retry-After": String(secondsToUtcMidnight(nowMs)) } });
+    }
   } catch {
     return status(503);
   }
@@ -176,10 +226,11 @@ export function retentionCutoff(nowMs: number): string {
   return utcDay(nowMs - RETENTION_DAYS * DAY_MS);
 }
 
-/** Deletes reports, lab runs and calibration log rows past retention, and closes lab runs whose window expired. */
+/** Deletes reports, their daily counts, lab runs and calibration log rows past retention, and closes lab runs whose window expired. */
 export async function runRetention(env: Env, nowMs: number): Promise<void> {
   const cutoff = retentionCutoff(nowMs);
   await env.DB.prepare(RETENTION_SQL).bind(cutoff).run();
+  await env.DB.prepare(REPORT_DAYS_RETENTION_SQL).bind(cutoff).run();
   await env.DB.prepare(LAB_RETENTION_SQL).bind(cutoff).run();
   await env.DB.prepare(CLOSE_EXPIRED_RUNS_SQL).bind(Math.floor(nowMs / 1000)).run();
   await env.DB.prepare(CALIBRATION_LOG_RETENTION_SQL).bind(Date.parse(cutoff + "T00:00:00Z") / 1000).run();

@@ -33,9 +33,15 @@
       "migrations_dir": "migrations"
     }
   ],
+  // Burst limit of POST /api/report: 300 calls per 60 s, counted per Cloudflare location and approximate
+  // (README, "Rate limits"). The Worker calls it with one constant key, never anything about the sender.
+  "ratelimits": [{ "name": "REPORT_LIMIT", "namespace_id": "1001", "simple": { "limit": 300, "period": 60 } }],
   "vars": {
     // Most lab runs (POST /api/lab/runs) created per UTC day; past it the API answers 429.
     "LAB_DAILY_CAP": "1000",
+    // Most reports (POST /api/report) stored per UTC day, exact; past it the API answers 429 and writes
+    // nothing. Sized so reports and the lab together stay under D1's 100,000 rows written a day (README).
+    "REPORT_DAILY_CAP": "6000",
     // Kill switch of the daily auto calibration (README, "Automatic calibration"). Anything but "on"
     // stops the evaluation and makes GET /api/calibration serve calibration.json alone.
     "AUTO_CALIBRATION": "on"
@@ -43,8 +49,8 @@
   // TURNSTILE_SECRET_KEY is a secret (npx wrangler secret put TURNSTILE_SECRET_KEY), never in this file;
   // local dev reads it from .dev.vars (see .dev.vars.example).
   "triggers": {
-    // Daily job: deletes reports, lab runs and calibration log rows older than 400 days, closes expired
-    // lab runs, then runs the auto calibration (one calibration_log row).
+    // Daily job: deletes reports, their daily counts, lab runs and calibration log rows older than 400 days,
+    // closes expired lab runs, then runs the auto calibration (one calibration_log row).
     "crons": ["17 3 * * *"]
   }
 }
