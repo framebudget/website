@@ -11,12 +11,14 @@ import {
   fitWeights,
   normalize,
   percentile,
+  ran,
   readRows,
   scoreOf,
 } from "../scripts/calibrate.mjs";
 
 const fixture = (name: string) => readFileSync(new URL("fixtures/" + name, import.meta.url), "utf8");
 const REFERENCE = { float: 10800, typed: 219000, alloc: 30900, path: 4860 };
+const COLD_REFERENCE = { float: 5500, typed: 45000, alloc: 12400, path: 1780 };
 const OPTIONS = { percentile: 50, targetFps: 55, maxUnder: 0.05, minSamples: 10, cal: undefined, reference: REFERENCE };
 
 const KERNEL_NAMES = ["float", "typed", "alloc", "path"] as const;
@@ -125,8 +127,8 @@ describe("calibrate", () => {
 
   it("judges v2 rows on late frames and ignores rows where the effect was allowed but not used", () => {
     const rows = [
-      // Allowed, never used: would all fail on late.main, but say nothing about shimmer.
-      ...range(50, 79).map((score) => row(score, { effects: ["shimmer"], late: { main: 0.5 } })),
+      // Allowed, used something else: would all fail on late.main, but say nothing about shimmer.
+      ...range(50, 79).map((score) => row(score, { effects: ["shimmer"], used: ["hover"], late: { main: 0.5 } })),
       // Used, few late frames for shimmer itself; fps is ignored on v2 rows.
       ...range(60, 79).map((score) => row(score, { effects: ["shimmer"], used: ["shimmer"], late: { main: 0.5, shimmer: 0.02 }, fps: { main: 20 } })),
       // Used, no late entry for shimmer: late.main decides, and it is over --max-late.
@@ -135,6 +137,34 @@ describe("calibrate", () => {
     expect(effectOf(rows, "shimmer")).toMatchObject({ samples: 30, lowestScore: 40, threshold: 60, failRate: 0, devices: 20 });
     // A looser --max-late passes the late.main devices too.
     expect(effectOf(rows, "shimmer", { maxLate: 0.3 })).toMatchObject({ threshold: 40 });
+  });
+
+  it("counts every allowed or stepped effect on a v2 row whose page reported no use", () => {
+    // used: [] means the page reported no use: blur stepped down there is still a failure of blur.
+    const rows = [
+      ...range(10, 29).map((score) => row(score, { stepped: ["blur"], late: { main: 0.02 } })),
+      ...range(30, 79).map((score) => row(score, { effects: ["blur"], late: { main: 0.02 } })),
+    ];
+    expect(ran(normalize(rows[0]!), "blur")).toBe(true);
+    expect(effectOf(rows, "blur")).toMatchObject({ samples: 70, lowestScore: 10, threshold: 30, failRate: 0 });
+    // Capacity needs to know what the page used: none of these rows counts.
+    expect(analyze(rows, { ...OPTIONS, minSamples: 3 }).capacity).toMatchObject({ rows: 0, uncosted: 0, proposed: null });
+  });
+
+  it("scores cold-only rows against the cold reference, for weighted effects and capacity loads", () => {
+    // Cold-only devices: kernels at `score` percent of the cold reference, no warm run.
+    const cold = (score: number) => ({
+      ...row(score, { effects: ["blur"], used: ["blur"], late: { main: 0.02 } }),
+      warm: null,
+      ...Object.fromEntries(KERNEL_NAMES.map((k) => ["kernel_" + k, (COLD_REFERENCE[k] * score) / 100])),
+    });
+    const rows = range(40, 79).map(cold);
+    const calibration = currentCalibration({ effects: { blur: { weights: { path: 1 } } } });
+    const result = analyze(rows, { ...OPTIONS, minSamples: 3, calibration });
+    // On the warm reference, path at 40% of the cold one would score about 14.6.
+    expect(result.effects.find((e: { name: string }) => e.name === "blur")!.lowestScore).toBeCloseTo(40, 6);
+    // blur costs 6: the heaviest load is 600 / 40.
+    expect(result.capacity.proposed).toBeCloseTo(15, 6);
   });
 
   it("lets explored rows below the current threshold lower it", () => {
@@ -162,6 +192,19 @@ describe("calibrate", () => {
     for (const k of ["float", "typed", "alloc"] as const) expect(fit.weights![k] ?? 0).toBeLessThan(0.15);
     expect(fitWeights(samples.slice(0, 19), REFERENCE, 10)).toMatchObject({ weights: null, reason: "fewer than 20 samples" });
     expect(fitWeights(samples.map((s) => ({ ...s, failed: false })), REFERENCE, 10)).toMatchObject({ weights: null });
+  });
+
+  it("gives no weight to a kernel that is the same on every sample", () => {
+    const random = lcg(11);
+    const samples = range(1, 120).map(() => {
+      const x = Object.fromEntries(KERNEL_NAMES.map((k) => [k, random() * 2 - 1])) as Record<(typeof KERNEL_NAMES)[number], number>;
+      // float is constant: ln(1.3) summed and averaged leaves a spread of about 7e-16, not 0.
+      const kernels = Object.fromEntries(KERNEL_NAMES.map((k) => [k, REFERENCE[k] * Math.exp(x[k])]));
+      return { kernels: { ...kernels, float: REFERENCE.float * 1.3 }, failed: x.path < -0.2 };
+    });
+    const fit = fitWeights(samples, REFERENCE, 10);
+    expect(fit.weights!.float).toBeUndefined();
+    expect(fit.weights!.path).toBeGreaterThanOrEqual(0.8);
   });
 
   it("proposes weights and a weighted threshold from the report rows", () => {
@@ -202,15 +245,27 @@ describe("calibrate", () => {
     expect(cheaper.capacity.proposed).toBeCloseTo(15, 6);
   });
 
+  it("skips capacity rows that ran an effect without a cost", () => {
+    const rows = range(20, 60).map((score) => row(score, { effects: ["blur"], used: ["blur"], late: { main: 0.02 } }));
+    // `mine` has no cost anywhere: its late frames would count against blur's load.
+    const uncosted = range(20, 30).map((score) => row(score, { effects: ["blur", "mine"], used: ["blur", "mine"], late: { main: 0.5 } }));
+    const { capacity } = analyze([...rows, ...uncosted], { ...OPTIONS, minSamples: 3 });
+    expect(capacity).toMatchObject({ rows: 41, uncosted: 11, failRate: 0 });
+    expect(capacity.proposed).toBeCloseTo(30, 6);
+  });
+
   it("merges calibration patches by effect, field by field, ignoring invalid values", () => {
     const merged = currentCalibration(
-      { effects: { blur: { threshold: 80, cost: -1 } }, capacity: 12 },
-      { effects: { blur: { weights: { path: 1, gpu: 2, float: "x" } }, mine: { cost: 2 } }, capacity: -3, reference: { path: 0 } },
+      { effects: { blur: { threshold: 80, cost: -1 } }, capacity: 12, coldReference: { path: 2000, float: -1 } },
+      { effects: { blur: { weights: { path: 1, gpu: 2, float: "x", typed: 0 } }, mine: { cost: 2 } }, capacity: -3, reference: { path: 0 } },
     );
     expect(merged.effects.blur).toEqual({ threshold: 80, cost: 6, weights: { path: 1 } });
     expect(merged.effects.mine).toEqual({ cost: 2 });
     expect(merged.capacity).toBe(12);
     expect(merged.reference).toEqual(REFERENCE);
+    expect(merged.coldReference).toEqual({ ...COLD_REFERENCE, path: 2000 });
+    // Weights that are all zero are no weights.
+    expect(currentCalibration({ effects: { blur: { weights: { path: 0, float: 0 } } } }).effects.blur).toEqual({ threshold: 90, cost: 6 });
   });
 
   describe("--lab", () => {

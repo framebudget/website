@@ -202,18 +202,24 @@ export function scoreOf(kernels, reference) {
 
 const isObject = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
 const nonNegative = (v) => typeof v === "number" && Number.isFinite(v) && v >= 0;
+const positive = (v) => typeof v === "number" && Number.isFinite(v) && v > 0;
+
+/** Positive finite rates of `rates` copied onto `target`, per kernel. */
+function applyRates(target, rates) {
+  if (!isObject(rates)) return;
+  for (const k of KERNELS) if (positive(rates[k])) target[k] = rates[k];
+}
 
 /**
  * Applies a calibration patch onto `current` (mutated and returned): positive reference
- * rates, a non-negative capacity, and per effect (merged by name, field by field) a
- * non-negative threshold and cost and kernel weights. Invalid values are ignored; a
- * valid `weights` object replaces the previous one.
+ * and cold reference rates, a non-negative capacity, and per effect (merged by name, field
+ * by field) a non-negative threshold and cost and positive kernel weights. Invalid values
+ * are ignored; a `weights` object with at least one positive weight replaces the previous one.
  */
 export function applyPatch(current, patch) {
   if (!isObject(patch)) return current;
-  if (isObject(patch.reference)) {
-    for (const k of KERNELS) if (patch.reference[k] > 0 && Number.isFinite(patch.reference[k])) current.reference[k] = patch.reference[k];
-  }
+  applyRates(current.reference, patch.reference);
+  applyRates(current.coldReference, patch.coldReference);
   if (nonNegative(patch.capacity)) current.capacity = patch.capacity;
   if (isObject(patch.effects)) {
     for (const [name, def] of Object.entries(patch.effects)) {
@@ -222,7 +228,7 @@ export function applyPatch(current, patch) {
       if (nonNegative(def.threshold)) effect.threshold = def.threshold;
       if (nonNegative(def.cost)) effect.cost = def.cost;
       if (isObject(def.weights)) {
-        const weights = Object.fromEntries(KERNELS.filter((k) => nonNegative(def.weights[k])).map((k) => [k, def.weights[k]]));
+        const weights = Object.fromEntries(KERNELS.filter((k) => positive(def.weights[k])).map((k) => [k, def.weights[k]]));
         if (Object.keys(weights).length) effect.weights = weights;
       }
     }
@@ -232,17 +238,17 @@ export function applyPatch(current, patch) {
 
 /**
  * @typedef {{ threshold?: number, cost?: number, weights?: Record<string, number> }} EffectCalibration
- * @typedef {{ reference: Record<string, number>, capacity: number, effects: Record<string, EffectCalibration> }} Calibration
+ * @typedef {{ reference: Record<string, number>, coldReference: Record<string, number>, capacity: number, effects: Record<string, EffectCalibration> }} Calibration
  */
 
 /**
- * The library's defaultCalibration (reference, capacity, effects) with each patch applied in order.
+ * The library's defaultCalibration (reference, coldReference, capacity, effects) with each patch applied in order.
  * @param {...unknown} patches
  * @returns {Calibration}
  */
 export function currentCalibration(...patches) {
   /** @type {Calibration} */
-  const current = { reference: {}, capacity: 0, effects: {} };
+  const current = { reference: {}, coldReference: {}, capacity: 0, effects: {} };
   applyPatch(current, defaultCalibration);
   for (const patch of patches) applyPatch(current, patch);
   return current;
@@ -281,16 +287,24 @@ export function rescaleFactor(reference, proposed, weights = EQUAL_WEIGHTS) {
   return total > 0 ? Math.exp(sum / total) : null;
 }
 
-/** The score an effect is judged on: its weighted score when the current calibration gives it weights, else the stored score. */
+/**
+ * The score an effect is judged on: its weighted score when the current calibration gives it
+ * weights, else the stored score. `reference` is the one the row's kernels were measured
+ * against (warm rates on the warm reference, cold-only rows on the cold reference).
+ */
 function effectScore(row, effect, calibration, reference) {
   const weights = calibration.effects[effect]?.weights;
   if (!weights) return row.score;
   return weightedScore(row.kernels, reference, weights) ?? row.score;
 }
 
-/** The row's page ran `effect`: allowed or stepped down, and on v2 also used by the page. */
+/**
+ * The row's page ran `effect`: allowed or stepped down, and on v2 also used by the page. An
+ * empty `used` means the page reported no use, and then (as in the library) every allowed
+ * effect counts.
+ */
 export function ran(row, effect) {
-  if (row.v === 2 && !(row.used ?? []).includes(effect)) return false;
+  if (row.v === 2 && row.used?.length && !row.used.includes(effect)) return false;
   return row.effects.includes(effect) || row.stepped.includes(effect);
 }
 
@@ -398,8 +412,10 @@ export function fitWeights(samples, reference, minSamples) {
   const x = usable.map((s) => KERNELS.map((k) => Math.log(s.kernels[k] / reference[k])));
   const y = usable.map((s) => (s.failed ? 1 : 0));
   const mean = KERNELS.map((_, k) => x.reduce((sum, row) => sum + row[k], 0) / n);
-  const sd = KERNELS.map((_, k) => Math.sqrt(x.reduce((sum, row) => sum + (row[k] - mean[k]) ** 2, 0) / n));
-  const z = x.map((row) => row.map((v, k) => (sd[k] > 0 ? (v - mean[k]) / sd[k] : 0)));
+  // A constant column has no spread; its rounded sd can come out a tiny positive number, so test it exactly.
+  const spread = KERNELS.map((_, k) => x.some((row) => row[k] !== x[0][k]));
+  const sd = KERNELS.map((_, k) => (spread[k] ? Math.sqrt(x.reduce((sum, row) => sum + (row[k] - mean[k]) ** 2, 0) / n) : 0));
+  const z = x.map((row) => row.map((v, k) => (spread[k] ? (v - mean[k]) / sd[k] : 0)));
   let bias = 0;
   const beta = KERNELS.map(() => 0);
   for (let iteration = 0; iteration < FIT_ITERATIONS; iteration++) {
@@ -415,7 +431,7 @@ export function fitWeights(samples, reference, minSamples) {
     bias -= (FIT_RATE * gradBias) / n;
     for (let k = 0; k < beta.length; k++) beta[k] -= FIT_RATE * (grad[k] / n + FIT_L2 * beta[k]);
   }
-  const raw = KERNELS.map((_, k) => (sd[k] > 0 ? Math.max(0, -beta[k] / sd[k]) : 0));
+  const raw = KERNELS.map((_, k) => (spread[k] ? Math.max(0, -beta[k] / sd[k]) : 0));
   const total = raw.reduce((s, w) => s + w, 0);
   if (!(total > 0)) return { ...result, reason: "no kernel predicts failure" };
   /** @type {Record<string, number>} */
@@ -432,6 +448,8 @@ export function analyze(rawRows, options) {
   const opts = { ...DEFAULT_OPTIONS, ...options };
   const calibration = opts.calibration ?? currentCalibration();
   const reference = opts.reference ?? calibration.reference;
+  /** The reference a row's kernels were scored against: warm rates on `reference`, cold-only rows on the cold reference. */
+  const rowReference = (r) => (r.warm !== null ? reference : calibration.coldReference);
   const rows = rawRows.map(normalize);
   const warmRows = rows.filter((r) => r.warm !== null);
   /** @type {Record<string, number | null>} */
@@ -458,7 +476,7 @@ export function analyze(rawRows, options) {
     const samples = scored.flatMap((r) => {
       if (!ran(r, name)) return [];
       const verdict = failed(r, name, opts);
-      return verdict === null ? [] : [{ row: r, score: effectScore(r, name, calibration, reference), failed: verdict }];
+      return verdict === null ? [] : [{ row: r, score: effectScore(r, name, calibration, rowReference(r)), failed: verdict }];
     });
     const found = bandThreshold(samples, opts);
     const effectFactor = current?.weights ? rescaleFactor(reference, proposed, current.weights) : factor;
@@ -494,13 +512,18 @@ export function analyze(rawRows, options) {
     });
   }
 
-  // Capacity: v2 rows only, since only they say which effects the page used.
-  const loadRows = scored.filter((r) => r.v === 2).flatMap((r) => {
+  // Capacity: v2 rows with a non-empty `used` only, since only they say which effects the page used.
+  // A row that ran an effect without a cost in the current calibration has no load and is skipped.
+  let uncosted = 0;
+  const loadRows = scored.filter((r) => r.v === 2 && r.used?.length).flatMap((r) => {
     const names = [...new Set([...r.effects, ...r.stepped])].filter((e) => ran(r, e));
+    if (names.some((e) => calibration.effects[e]?.cost === undefined)) {
+      uncosted++;
+      return [];
+    }
     let load = 0;
     for (const e of names) {
-      const cost = calibration.effects[e]?.cost ?? 0;
-      load += (cost * 100) / Math.max(effectScore(r, e, calibration, reference), 1);
+      load += (calibration.effects[e].cost * 100) / Math.max(effectScore(r, e, calibration, rowReference(r)), 1);
     }
     if (!(load > 0)) return [];
     const stepped = names.some((e) => r.stepped.includes(e));
@@ -526,6 +549,7 @@ export function analyze(rawRows, options) {
     capacity: {
       current: calibration.capacity,
       rows: loadRows.length,
+      uncosted,
       proposed: capacity?.capacity ?? null,
       band: capacity?.band ?? 0,
       failRate: capacity?.failRate ?? null,
@@ -806,7 +830,7 @@ function print(result, options) {
   }
   out.push("");
   const c = result.capacity;
-  out.push(`Capacity (v2 reports, ${c.rows} with a used, costed effect and a verdict): load = sum(cost x 100 / max(score, 1)) over the`);
+  out.push(`Capacity (v2 reports, ${c.rows} with a used, costed effect and a verdict; ${c.uncosted} skipped for an effect without a cost): load = sum(cost x 100 / max(score, 1)) over the`);
   out.push(`effects the page ran; a page failed when one was stepped down or late frames of main or of one exceeded ${options.maxLate}.`);
   out.push(`Load bands are L / ${1 + options.band} < load <= L; the capacity is the highest L from which every counted band below fails under`);
   out.push(`${+(options.maxUnder * 100).toFixed(2)}%.`);
