@@ -57,8 +57,8 @@
             <tr><th scope="row">Kernel rates</th><td>How much work each of the four benchmark kernels did per millisecond, to 3 significant digits.</td></tr>
             <tr><th scope="row">Clock resolution</th><td>The precision of the page's timer, in milliseconds.</td></tr>
             <tr><th scope="row">Hardware hints</th><td>The number of logical cores and the rounded memory size the browser reports, the Compute Pressure state when available, and whether reduced motion is on.</td></tr>
-            <tr><th scope="row">Decision</th><td>The tier, the effects that ran, and the effects framebudget stepped down because frames were late.</td></tr>
-            <tr><th scope="row">Frame rates</th><td>The median frames per second of the page and of each effect that reported frames, whole numbers.</td></tr>
+            <tr><th scope="row">Decision</th><td>The tier, the effects that ran, and the effects framebudget stepped down because frames were late. From framebudget versions that send them: the effects the page used, and the effect a page view turned on just below its threshold to calibrate it, if any.</td></tr>
+            <tr><th scope="row">Frame rates</th><td>The frames per second of the page and of each effect that reported frames, whole numbers. From framebudget versions that send it: the share of those frames that came late, to 2 decimals.</td></tr>
           </tbody>
         </table>
         <p>The server adds a few coarse fields from the request and then discards the request headers:</p>
@@ -111,7 +111,7 @@
 
       <section id="retention" aria-labelledby="retention-title">
         <h2 id="retention-title">Storage and retention</h2>
-        <p>Reports are stored in a Cloudflare D1 database, behind the Cloudflare Worker that serves this site. A daily job deletes every report older than 400 days. The reports are used only to calibrate framebudget: reference rates, thresholds and the score scale. Only aggregated numbers, such as medians and percentiles, are ever published.</p>
+        <p>Reports are stored in a Cloudflare D1 database, behind the Cloudflare Worker that serves this site. A daily job deletes every report older than 400 days. The reports are used only to calibrate framebudget: reference rates, thresholds, effect weights, the load capacity and the score scale. Only aggregated numbers, such as medians and percentiles, are ever published.</p>
       </section>
 
       <section id="local" aria-labelledby="local-title">
