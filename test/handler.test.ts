@@ -13,7 +13,7 @@ import {
 } from "../src/handler";
 import { CALIBRATION_LOG_RETENTION_SQL } from "../src/calibration/store.ts";
 import worker from "../src/index";
-import { beacon, CHROME_ANDROID_UA, installCache, makeCtx, makeEnv, ORIGIN, validReport } from "./helpers";
+import { beacon, CHROME_ANDROID_UA, installCache, makeCtx, makeEnv, ORIGIN, validReport, validReportV2 } from "./helpers";
 
 /** Any other site that turned sharing on. */
 const OTHER_ORIGIN = "https://example.com";
@@ -74,8 +74,37 @@ describe("POST /api/report", () => {
         os: "android",
         mobile: 1,
         country: "BR",
+        v: 1,
+        used: null,
+        explored: null,
+        late: null,
+        late_main: null,
       },
     ]);
+  });
+
+  it("stores a v2 report with its version, used effects, exploration and late fractions", async () => {
+    const r = { ...validReportV2(), explored: "canvasLowRes" };
+    const { response, rows } = await send(beacon({ body: JSON.stringify(r) }));
+    expect(response.status).toBe(204);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      score: 62,
+      effects: '["canvasLowRes","entrances","hover"]',
+      fps_main: 58,
+      v: 2,
+      used: '["canvasLowRes","hover"]',
+      explored: "canvasLowRes",
+      late: '{"main":0.03,"canvasLowRes":0.08}',
+      late_main: 0.03,
+    });
+  });
+
+  it("stores NULL for a v2 report without exploration or a main late fraction", async () => {
+    const r = { ...validReportV2(), late: { worker: 0.2 } };
+    const { response, rows } = await send(beacon({ body: JSON.stringify(r) }));
+    expect(response.status).toBe(204);
+    expect(rows[0]).toMatchObject({ v: 2, explored: null, late: '{"worker":0.2}', late_main: null });
   });
 
   it("never stores the user agent, IP, city or the sending site", async () => {
@@ -166,6 +195,9 @@ describe("POST /api/report", () => {
       ["extra key", () => beacon({ body: JSON.stringify({ ...validReport(), url: "/x" }) }), 400],
       ["wrong type", () => beacon({ body: JSON.stringify({ ...validReport(), score: "62" }) }), 400],
       ["out of range", () => beacon({ body: JSON.stringify({ ...validReport(), score: 1e9 }) }), 400],
+      ["v2 key on a v1 report", () => beacon({ body: JSON.stringify({ ...validReport(), used: [] }) }), 400],
+      ["v2 report without late", () => beacon({ body: JSON.stringify({ ...validReportV2(), late: undefined }) }), 400],
+      ["unknown version", () => beacon({ body: JSON.stringify({ ...validReportV2(), v: 3 }) }), 400],
       ["empty body", () => beacon({ body: "" }), 400],
     ])("rejects %s with a bare status and no row", async (_name, make, code) => {
       const { response, rows } = await send(from(make(), origin, site));

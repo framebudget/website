@@ -1,14 +1,15 @@
 /**
- * Strict validation of the library's TelemetryReport (v1). Anything outside
- * the expected shape is rejected whole: unknown keys at any level, wrong
- * types, out-of-range numbers, malformed names.
+ * Strict validation of the library's TelemetryReport, v1 (older library
+ * versions) or v2 (adds `used`, `explored` and `late`). Key sets are exact per
+ * version. Anything outside the expected shape is rejected whole: unknown keys
+ * at any level, wrong types, out-of-range numbers, malformed names.
  */
 
 export type KernelName = "float" | "typed" | "alloc" | "path";
 export type Tier = "Full" | "High" | "Medium" | "Lite";
 export type PressureState = "nominal" | "fair" | "serious" | "critical";
 
-export interface Report {
+export interface ReportV1 {
   v: 1;
   cal: string;
   score: number;
@@ -22,6 +23,18 @@ export interface Report {
   stepped: string[];
   fps: Record<string, number>;
 }
+
+export interface ReportV2 extends Omit<ReportV1, "v"> {
+  v: 2;
+  /** Effects the page used, sorted. */
+  used: string[];
+  /** The effect this page view turned on below its threshold, or null. */
+  explored: string | null;
+  /** Per source, fraction of late frames over recent windows, 0..1. */
+  late: Record<string, number>;
+}
+
+export type Report = ReportV1 | ReportV2;
 
 /** Scores are 100 for the reference device; this leaves room for devices 100 times faster. */
 export const MAX_SCORE = 10000;
@@ -41,7 +54,8 @@ const NAME = /^[A-Za-z][A-Za-z0-9_-]{0,31}$/;
 /** Printable ASCII, 1 to 64 characters. */
 export const CAL = /^[\x20-\x7e]{1,64}$/;
 
-const REPORT_REQUIRED = ["v", "cal", "score", "cold", "warm", "kernels", "tickMs", "hints", "tier", "effects", "stepped", "fps"];
+const REPORT_V1_KEYS = ["v", "cal", "score", "cold", "warm", "kernels", "tickMs", "hints", "tier", "effects", "stepped", "fps"];
+const REPORT_V2_KEYS = [...REPORT_V1_KEYS, "used", "explored", "late"];
 const HINTS_KEYS = ["cores", "memoryGb", "pressure", "reducedMotion"];
 
 type Obj = Record<string, unknown>;
@@ -93,18 +107,24 @@ function isHints(v: unknown): v is Report["hints"] {
   return true;
 }
 
-function isFps(v: unknown): v is Record<string, number> {
+/** An object of at most MAX_FPS_KEYS source names, each value accepted by `isValue`. */
+function isPerSource(v: unknown, isValue: (value: unknown) => boolean): v is Record<string, number> {
   if (!isObject(v)) return false;
   const keys = Object.keys(v);
   if (keys.length > MAX_FPS_KEYS) return false;
-  return keys.every((k) => NAME.test(k) && isInt(v[k], 0, MAX_FPS));
+  return keys.every((k) => NAME.test(k) && isValue(v[k]));
 }
 
-/** Returns the report when `input` (parsed JSON) is a valid v1 report, else null. */
+const isFps = (v: unknown) => isPerSource(v, (fps) => isInt(fps, 0, MAX_FPS));
+const isLate = (v: unknown) => isPerSource(v, (fraction) => isNum(fraction, 0, 1));
+
+/** Returns the report when `input` (parsed JSON) is a valid v1 or v2 report, else null. */
 export function validateReport(input: unknown): Report | null {
-  if (!isObject(input) || !hasKeys(input, REPORT_REQUIRED, REPORT_REQUIRED)) return null;
+  if (!isObject(input)) return null;
   const r = input;
-  if (r.v !== 1) return null;
+  if (r.v !== 1 && r.v !== 2) return null;
+  const keys = r.v === 1 ? REPORT_V1_KEYS : REPORT_V2_KEYS;
+  if (!hasKeys(r, keys, keys)) return null;
   if (typeof r.cal !== "string" || !CAL.test(r.cal)) return null;
   if (!isInt(r.score, 0, MAX_SCORE)) return null;
   if (r.cold !== null && !isInt(r.cold, 0, MAX_SCORE)) return null;
@@ -115,5 +135,10 @@ export function validateReport(input: unknown): Report | null {
   if (typeof r.tier !== "string" || !TIERS.includes(r.tier)) return null;
   if (!isNames(r.effects) || !isNames(r.stepped)) return null;
   if (!isFps(r.fps)) return null;
+  if (r.v === 2) {
+    if (!isNames(r.used)) return null;
+    if (r.explored !== null && !(typeof r.explored === "string" && NAME.test(r.explored))) return null;
+    if (!isLate(r.late)) return null;
+  }
   return r as unknown as Report;
 }

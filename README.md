@@ -53,7 +53,7 @@ Then, with the port wrangler prints (8787 by default):
 ```sh
 curl -i -X POST http://localhost:8787/api/report \
   -H 'Origin: http://localhost:8787' -H 'Content-Type: text/plain;charset=UTF-8' \
-  --data-binary '{"v":1,"cal":"provisional-1","score":62,"cold":48,"warm":66,"kernels":{"float":7130,"typed":151000,"alloc":18200,"path":3010},"tickMs":0.1,"hints":{"cores":8,"memoryGb":4,"reducedMotion":false},"tier":"Medium","effects":["canvasLowRes","entrances","hover"],"stepped":[],"fps":{"main":58,"canvasLowRes":55}}'
+  --data-binary '{"v":2,"cal":"provisional-1","score":62,"cold":48,"warm":66,"kernels":{"float":7130,"typed":151000,"alloc":18200,"path":3010},"tickMs":0.1,"hints":{"cores":8,"memoryGb":4,"reducedMotion":false},"tier":"Medium","effects":["canvasLowRes","entrances","hover"],"used":["canvasLowRes","hover"],"stepped":[],"explored":null,"fps":{"main":58,"canvasLowRes":55},"late":{"main":0.03,"canvasLowRes":0.08}}'
 npx wrangler d1 execute framebudget --local --command "SELECT * FROM reports"
 curl -i http://localhost:8787/api/calibration
 curl -i -X POST http://localhost:8787/api/lab/runs \
@@ -88,7 +88,7 @@ One Cloudflare Worker (free plan) for framebudget.dev:
 - `POST /api/lab/runs` and `POST /api/lab/runs/<run>/steps`: the opt-in lab (`/lab`). A visitor who consents and passes Turnstile gets one row; each measured step updates that row.
 - A daily cron deletes reports, their daily counts, lab runs and calibration log rows older than 400 days, closes expired lab runs, then calibrates the effect thresholds from the lab runs (see [Automatic calibration](#automatic-calibration)).
 
-The data exists to calibrate the score scale (reference rates) and the effect thresholds on real devices.
+The data exists to calibrate the score scale (reference rates), the effect thresholds, effect weights and the load capacity on real devices.
 
 ### Routing and errors
 
@@ -109,11 +109,11 @@ Public: any origin may post. Since framebudget 0.5.0, `share` always sends to `h
 | `Content-Type` is `text/plain` (what `sendBeacon` sends for a string) or `application/json` | 415 |
 | Under the burst limit (`REPORT_LIMIT`, 300 calls a minute), checked before the body is read | 429, `Retry-After: 60` |
 | `Content-Length` (when present) and the bytes actually read are at most 4096; reading stops past the limit, so a missing or understated `Content-Length` does not help | 413 |
-| Body is UTF-8 JSON and a valid v1 report (`src/validate.ts`) | 400 |
+| Body is UTF-8 JSON and a valid v1 or v2 report (`src/validate.ts`) | 400 |
 | Fewer than `REPORT_DAILY_CAP` reports stored today (UTC) | 429, `Retry-After`: the seconds to the next UTC midnight |
 | Insert succeeds | 503 |
 
-Success is `204 No Content`. Validation is strict: exact keys at every level, `v === 1`, integer scores 0..10000, kernel rates finite and positive, effect and fps names matching `^[A-Za-z][A-Za-z0-9_-]{0,31}$`, at most 64 effects with no duplicates, at most 40 fps sources with whole values 0..1000, known tier and pressure values. Any other `/api/*` path answers a bare 404.
+Success is `204 No Content`. Validation is strict: exact keys at every level for the report's version (`v` is 1 or 2; v2 adds `used`, `explored` and `late`, and a v1 report carrying any of them, or a v2 report missing one, is rejected), integer scores 0..10000, kernel rates finite and positive, effect and fps names matching `^[A-Za-z][A-Za-z0-9_-]{0,31}$`, at most 64 effects with no duplicates, at most 40 fps sources with whole values 0..1000, known tier and pressure values. On v2: `used` follows the `effects` rules, `explored` is `null` or an effect name, `late` has at most 40 sources (names as above) with finite values 0..1. Older library versions still send v1 and stay accepted. Any other `/api/*` path answers a bare 404.
 
 CORS: every answer of `/api/report`, errors included, carries `Access-Control-Allow-Origin: *` and never `Access-Control-Allow-Credentials`. A `sendBeacon` with a string body is a CORS simple request (`text/plain`, no preflight; the browser does not read the answer). A `fetch` with `application/json` from another site sends a preflight first: `OPTIONS /api/report` answers `204` with `Access-Control-Allow-Origin: *`, `Access-Control-Allow-Methods: POST`, `Access-Control-Allow-Headers: Content-Type` and `Access-Control-Max-Age: 86400`, and stores nothing.
 
@@ -208,7 +208,7 @@ Success is `204`. The write is a single `UPDATE lab_runs SET steps = json_insert
 
 Each row holds exactly what the library's `TelemetryReport` contains, plus coarse facts derived from request headers:
 
-- From the report: calibration version, final score, cold and warm benchmark scores, per-kernel rates, clock resolution, core count, device memory, Compute Pressure state, reduced-motion preference, tier, effects that ran, effects the governor stepped down, median fps per source.
+- From the report: report version, calibration version, final score, cold and warm benchmark scores, per-kernel rates, clock resolution, core count, device memory, Compute Pressure state, reduced-motion preference, tier, effects allowed at report time, effects the governor stepped down (still off when the report was sent), fps per source. From v2 reports also: effects the page used, the effect the page view explored below its threshold (if any), and the fraction of late frames per source.
 - Derived server-side: UTC day (no time of day), engine family and major version, OS family, phone-class flag, two-letter country from `request.cf.country`.
 
 A lab run (`lab_runs`) holds the library version, the calibration version, the lab protocol, the device numbers listed under [`POST /api/lab/runs`](#post-apilabruns) (scores, kernel rates, clock resolution, cores, memory, refresh rate, device pixel ratio, viewport width rounded to 100 px, reduced-motion and save-data flags), the same derived fields as a report, and the measured steps (per step: name, effects, frame count, duration, median, p95 and max frame time, frames over 1.5 refresh intervals, and for protocol 2 the mean, median and p95 main-thread work per frame and the frames with a work sample). Until the run closes it also holds the SHA-256 of the write key and the epoch second the run stops accepting steps; both are cleared when the last step arrives or, for abandoned runs, by the daily cron.
@@ -217,7 +217,7 @@ Not collected, not stored, not logged, for reports and lab runs alike: IP addres
 
 ### Schema
 
-`migrations/0001_reports.sql`, table `reports`:
+`migrations/0001_reports.sql` creates table `reports`; `migrations/0006_report_v2.sql` adds the v2 columns (`v` through `late_main`). v1 rows have `v = 1` and NULL in every v2-only column.
 
 | Column | Type | Notes |
 | --- | --- | --- |
@@ -233,15 +233,20 @@ Not collected, not stored, not logged, for reports and lab runs alike: IP addres
 | `pressure` | TEXT NULL | `nominal`, `fair`, `serious`, `critical` |
 | `reduced_motion` | INTEGER | 0 or 1 |
 | `tier` | TEXT | `Full`, `High`, `Medium`, `Lite` |
-| `effects` | TEXT | JSON array of effect names |
-| `stepped` | TEXT | JSON array of effect names |
-| `fps` | TEXT | JSON object, source to median fps |
+| `effects` | TEXT | JSON array of effect names allowed at report time |
+| `stepped` | TEXT | JSON array of effect names stepped down and still off, in step-down order |
+| `fps` | TEXT | JSON object, source to fps (v1: window median; v2: frames over elapsed time in recent windows) |
 | `fps_main` | INTEGER NULL | `fps.main`, for direct queries |
 | `engine` | TEXT | `blink`, `gecko`, `webkit`, `other` |
 | `engine_version` | INTEGER NULL | Chromium, Firefox or Safari (iOS) major version |
 | `os` | TEXT | `android`, `ios`, `windows`, `macos`, `linux`, `chromeos`, `other` |
 | `mobile` | INTEGER | 1 for phones (tablets are 0) |
 | `country` | TEXT NULL | Two-letter code, NULL when unknown |
+| `v` | INTEGER | Report version, 1 or 2 (default 1) |
+| `used` | TEXT NULL | JSON array of effect names the page used; NULL for v1 |
+| `explored` | TEXT NULL | Effect the page view turned on below its threshold; NULL when none or v1 |
+| `late` | TEXT NULL | JSON object, source to fraction of late frames (0..1); NULL for v1 |
+| `late_main` | REAL NULL | `late.main`, for direct queries; NULL when absent |
 
 Indexes: `score`, `(engine, engine_version)`, `(os, mobile)`, `created_day`. `mobile` alone has two values and gets no index of its own; it is the second column of the `os` index. iPadOS Safari reports itself as macOS, so iPads usually land in `macos`.
 
@@ -376,20 +381,26 @@ npx wrangler d1 execute framebudget --remote --command "SELECT id, datetime(crea
 
    A CSV export with a header row works too.
 
-2. Run the script (Node 22.18 or later: it runs `src/calibration/` with Node's type stripping; it reads the library's default reference rates from the installed `framebudget` package, so run `npm ci` first):
+2. Run the script (Node 22.18 or later: it runs `src/calibration/` with Node's type stripping; it reads the library's `defaultCalibration` from the installed `framebudget` package, so run `npm ci` first):
 
    ```sh
-   node scripts/calibrate.mjs export.json --percentile 50 --target-fps 55 --max-under 0.05
+   node scripts/calibrate.mjs export.json --percentile 50 --max-late 0.1 --max-under 0.05 --band 0.25
    ```
 
-   Options: `--percentile` (device percentile that becomes score 100, default 50), `--target-fps` (default 55), `--max-under` (largest tolerated fraction of devices under the target, default 0.05), `--min-samples` (default 10), `--cal` (version whose stored scores are the current scale, default the most common one), `--reference float=..,typed=..,alloc=..,path=..` (current reference rates, default `defaultCalibration.reference` of the installed `framebudget` package overridden by `calibration.json`).
+   Options: `--percentile` (device percentile that becomes score 100, default 50), `--max-late` (v2 rows: largest fraction of late frames a device may show with an effect on, default 0.1, the governor's default `maxLateFraction`), `--target-fps` (v1 rows only, default 55), `--max-under` (largest tolerated failure rate in any band, default 0.05), `--band` (band width, default 0.25), `--min-samples` (fewest devices for a band to count, default 10), `--cal` (version whose stored scores are the current scale, default the most common one), `--calibration patch.json` (a calibration patch, for example a site's own effect registry, applied last), `--reference float=..,typed=..,alloc=..,path=..` (current reference rates).
+
+   The current calibration (costs, thresholds, weights, capacity and reference rates) is `defaultCalibration` of the installed `framebudget` package, then `calibration.json`, then the `--calibration` patch. Effects merge by name, field by field; invalid values are ignored. `--reference`, when given, replaces the reference rates.
+
+   A device **ran** an effect when the effect was allowed or stepped down and, on v2 rows, the page used it (allowed is not used; an allowed effect the page never used says nothing). It **failed** the effect when the governor stepped it down (still off at report time; these rows are counted, not dropped, so failures are not censored), else when its frames were bad: on v2, `late[effect]` (else `late.main`) over `--max-late`; on v1, `fps[effect]` (else `fps.main`) under `--target-fps`. A row with neither verdict is skipped.
 
    It prints:
    - proposed reference rates: per kernel, the warm rate of the device at the chosen percentile (rows with a warm run only), rounded to 3 significant digits;
    - the rescale factor for existing scores. A score is `100 * geomean(rate / reference)` over the kernels (the library's benchmark, [github.com/framebudget/core](https://github.com/framebudget/core)), so new score = old score x `geomean(current reference / proposed reference)`;
-   - per effect, the lowest score threshold such that fewer than `--max-under` of the devices at or above it that ran the effect reported fps under the target (`fps[effect]` when present, else `fps.main`), on the current and on the proposed scale.
+   - per effect, the **band threshold**, on the current and on the proposed scale. Each sample score T is a candidate; its band is the devices with `T <= score < T x (1 + band)`, counted from `--min-samples` devices. The threshold is the lowest T whose band counts and such that every counted band starting at or above T fails under `--max-under`. A cumulative "devices at or above T" rate would hide failures right above T behind the many fast devices; bands do not. Also printed: samples, explored samples, the lowest score that ran it, the current threshold, the threshold band's failure rate and the devices at or above. An effect that has `weights` in the current calibration is judged on its weighted score;
+   - per effect, **proposed weights** (one score per effect): an L2-regularised logistic regression of failure on `ln(rate / current reference)` per kernel, over samples with a warm run and all four kernels (at least `max(--min-samples, 20)` samples with 3 failures and 3 passes). A kernel whose higher rate lowers the failure odds gets that much weight; weights are clamped at 0, normalised to sum 1 and rounded to 2 decimals. Printed with the band threshold on the weighted score `100 * exp(sum(w_k * ln(rate_k / reference_k)) / sum(w_k))`, on the current and on the proposed reference;
+   - the **proposed capacity** (v2 rows only): a page's load is `sum(cost * 100 / max(score, 1))` over the effects it ran, with the current costs; it failed when one of them was stepped down or the late fraction of `main` or of one of them is over `--max-late`. Each load L is a candidate with the band `L / (1 + band) < load <= L`; the capacity is the highest L whose band counts and such that every counted band ending at or below it fails under `--max-under`.
 
-   Only devices that ran an effect report its fps, so the data cannot justify a threshold below the lowest score that ran it. Proposed thresholds scale the stored final score, which includes hardware caps and pressure multipliers, so they are approximate for capped devices.
+   Only devices that ran an effect say anything about it, so the data cannot justify a threshold below the lowest score that ran it. **Exploration** is what puts data there: with `share.explore`, a small fraction of reporting page views turns one effect on a little below its threshold (within 25%). Those rows enter the samples like any other (the `explored` column counts them), so a too-strict threshold can come down. Proposed thresholds scale the stored final score, which includes hardware caps and pressure multipliers, so they are approximate for capped devices.
 
    Try it on the sample: `node scripts/calibrate.mjs test/fixtures/export.json`.
 
@@ -419,7 +430,7 @@ npx wrangler d1 execute framebudget --remote --command "SELECT id, datetime(crea
    node scripts/calibrate.mjs --lab lab.json --current log.json
    ```
 
-3. Apply the result: edit the effect thresholds and `ms` in `shared/site-effects.json` (the site reads them from there; a new threshold there is the new baseline of the automatic calibration), and the library defaults, `defaultCalibration` in [github.com/framebudget/core](https://github.com/framebudget/core), when they should change for everyone (the site picks them up with the library release that ships them), and/or set `reference` (and `coldReference`) in `calibration.json`. If the reference rates move, scale every threshold and tier floor by the printed factor in the same change, so effects stay on the same devices.
+3. Apply the result: edit the effect thresholds and `ms` in `shared/site-effects.json` (the site reads them from there; a new threshold there is the new baseline of the automatic calibration), and the library defaults, `defaultCalibration` in [github.com/framebudget/core](https://github.com/framebudget/core), when they should change for everyone (the site picks them up with the library release that ships them), and/or set `reference` (and `coldReference`) in `calibration.json`. If the reference rates move, scale every threshold and tier floor by the printed factor in the same change, so effects stay on the same devices. Apply proposed weights as `weights` on the effect (`{ "weights": { "path": 0.9, "typed": 0.1 } }`) together with the weighted threshold, since the effect is then judged on its weighted score. Apply the capacity as `capacity` in `calibration.json` (or in the library defaults); 0 turns it off.
 
 4. Open a pull request, then release the website (see [Releases and deploys](#releases-and-deploys)): the release deploys the Worker and the site.
 
@@ -447,7 +458,7 @@ npx wrangler d1 migrations apply framebudget --remote   # only when migrations/ 
 npm run deploy                                          # wrangler deploy: the Worker plus docs/dist
 ```
 
-The lab's Turnstile secret is a Worker secret, already set on the deployed Worker; to rotate it, run `npx wrangler secret put TURNSTILE_SECRET_KEY` (never commit it). `LAB_DAILY_CAP`, `REPORT_DAILY_CAP` and the `REPORT_LIMIT` rate limiting binding ship with `wrangler.jsonc`. The report route reads `report_days`, so `migrations/0005_report_days.sql` must be applied before the deploy that adds it (otherwise every report answers 503).
+The lab's Turnstile secret is a Worker secret, already set on the deployed Worker; to rotate it, run `npx wrangler secret put TURNSTILE_SECRET_KEY` (never commit it). `LAB_DAILY_CAP`, `REPORT_DAILY_CAP` and the `REPORT_LIMIT` rate limiting binding ship with `wrangler.jsonc`. The report route reads `report_days`, so `migrations/0005_report_days.sql` must be applied before the deploy that adds it (otherwise every report answers 503); likewise it writes the v2 columns, so `migrations/0006_report_v2.sql` must be applied before the deploy that accepts report v2.
 
 `framebudget.dev` and `www.framebudget.dev` are custom domains of the Worker, so the zone must be on the same Cloudflare account. Each host is its own origin: a page on `www` reports to `www`. New migrations go in `migrations/` and are applied with `npx wrangler d1 migrations apply framebudget --remote` before the deploy that needs them.
 

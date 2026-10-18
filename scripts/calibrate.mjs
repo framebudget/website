@@ -1,22 +1,23 @@
 #!/usr/bin/env node
 /**
- * Proposes framebudget calibration numbers from exported reports, and effect
+ * Proposes framebudget calibration numbers from exported reports (reference
+ * rates, effect thresholds, effect weights and the load capacity), and effect
  * thresholds from exported lab runs.
  *
  *   npx wrangler d1 execute framebudget --remote --json --command "SELECT * FROM reports" > export.json
- *   node scripts/calibrate.mjs export.json [--percentile 50] [--target-fps 55] [--max-under 0.05]
+ *   node scripts/calibrate.mjs export.json [--percentile 50] [--max-late 0.1] [--max-under 0.05] [--band 0.25] [--calibration <file>]
  *
  *   npx wrangler d1 execute framebudget --remote --json --command "SELECT * FROM lab_runs" > lab.json
  *   node scripts/calibrate.mjs --lab lab.json [--max-under 0.05] [--min-samples 10] [--current <file>]
  *
  * Node 22.18 or later; the only import outside Node and this repository is
  * `defaultCalibration` from the installed `framebudget` package (`npm ci` at the
- * repository root), for the current reference rates. The threshold search and the
- * auto calibration come from src/calibration/ (TypeScript, run with Node's type
+ * repository root), for the current reference rates, effect costs, thresholds and
+ * weights. The lab threshold search and the auto calibration come from src/calibration/ (TypeScript, run with Node's type
  * stripping), the same code the Worker's daily cron runs, and its run selection is
  * the cron's SQL, run over the export in an in-memory node:sqlite. Accepts the wrangler JSON
  * export (an array of `{ results: [...] }`), a plain JSON array of rows, or a CSV
- * export with a header row.
+ * export with a header row. Reads report v1 and v2 rows.
  */
 import { readdirSync, readFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
@@ -32,8 +33,34 @@ export { lowestThreshold, missedLateFrames };
 
 export const KERNELS = ["float", "typed", "alloc", "path"];
 
+/** Defaults of every analysis option; `reference` and `calibration` default to the library's. */
+export const DEFAULT_OPTIONS = {
+  percentile: 50,
+  targetFps: 55,
+  maxLate: 0.1,
+  maxUnder: 0.05,
+  minSamples: 10,
+  band: 0.25,
+  cal: undefined,
+  reference: undefined,
+  calibration: undefined,
+};
+
+/** Fewest samples the weights fit needs, whatever --min-samples says. */
+export const MIN_FIT_SAMPLES = 20;
+/** Fewest failures and fewest passes the weights fit needs. */
+export const MIN_FIT_CLASS = 3;
+const FIT_ITERATIONS = 2000;
+const FIT_RATE = 0.5;
+const FIT_L2 = 0.01;
+
 const USAGE = `Usage: node calibrate.mjs <export.json|export.csv> [options]
        node calibrate.mjs --lab <lab.json> [options]
+
+In reports, a device failed an effect when the governor stepped it down (still off at report
+time) or, without a step-down, when its frames were judged bad: v2 reports compare the fraction
+of late frames (late[effect], else late.main) with --max-late, v1 reports compare fps
+(fps[effect], else fps.main) with --target-fps.
 
 Options:
   --lab <file>         Export of the lab_runs table (JSON or CSV): per effect, frame cost over the
@@ -47,16 +74,26 @@ Options:
                        them) or a patch JSON such as GET /api/calibration (the patch only; cadence
                        unchecked). Default: no auto patch, every effect at its baseline.
   --percentile <p>     Device percentile (0-100) that becomes score 100. Default 50.
-  --target-fps <fps>   Reports only: frame rate a device must reach with an effect on. Default 55.
-  --max-under <f>      Largest tolerated fraction of devices that missed: under the target fps in
-                       reports, too many late frames with --lab. Default 0.05.
-  --min-samples <n>    Fewest devices at or above a threshold to trust it, and fewest devices behind a
-                       proposed effect ms with --lab. Default 10.
+  --max-late <f>       Reports, v2 rows: largest fraction of late frames a device may show with an
+                       effect on. Default 0.1, the governor's default maxLateFraction.
+  --target-fps <fps>   Reports, v1 rows only: frame rate a device must reach with an effect on. Default 55.
+  --max-under <f>      Largest tolerated fraction of devices that missed: in reports, the failure rate
+                       of any band at or above a threshold (and of any load band at or below the
+                       capacity); with --lab, too many late frames at or above a threshold. Default 0.05.
+  --band <f>           Reports only: width of a band, scores T <= score < T x (1 + f), loads
+                       L / (1 + f) < load <= L. Default 0.25.
+  --min-samples <n>    Fewest samples for a band to count in reports; fewest devices at or above a
+                       threshold to trust it, and fewest devices behind a proposed effect ms with --lab.
+                       Default 10.
   --cal <version>      Calibration version whose scores are the current scale.
                        Default: the most common version in the export.
+  --calibration <file> Reports only: a calibration patch (JSON, e.g. a site's own effect registry)
+                       applied after the library defaults and calibration.json at the repository root.
+                       Effects merge by name, field by field (threshold, cost, weights); invalid values
+                       are ignored.
   --reference <list>   Current reference rates, e.g. float=10800,typed=219000,alloc=30900,path=4860.
                        Default: defaultCalibration.reference of the installed framebudget package,
-                       overridden by calibration.json at the repository root.`;
+                       overridden by calibration.json, then by the --calibration patch.`;
 
 /** Parses RFC 4180 CSV (quoted fields, doubled quotes, newlines inside quotes). */
 export function parseCsv(text) {
@@ -116,13 +153,27 @@ const json = (v, fallback) => {
 
 /** Typed view of one stored row (CSV gives strings, JSON gives numbers and strings). */
 export function normalize(row) {
+  const list = (v) => {
+    const parsed = json(v, null);
+    return Array.isArray(parsed) ? parsed : null;
+  };
+  const object = (v) => {
+    const parsed = json(v, null);
+    return parsed !== null && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : null;
+  };
   return {
+    // Exports from before migration 0006 have no `v` column: every row there is v1.
+    v: num(row.v) ?? 1,
     cal: String(row.cal ?? ""),
     score: num(row.score),
     warm: num(row.warm),
     kernels: Object.fromEntries(KERNELS.map((k) => [k, num(row["kernel_" + k])])),
-    effects: json(row.effects, []),
-    fps: json(row.fps, {}),
+    effects: list(row.effects) ?? [],
+    used: list(row.used),
+    stepped: list(row.stepped) ?? [],
+    explored: typeof row.explored === "string" && row.explored !== "" ? row.explored : null,
+    fps: object(row.fps) ?? {},
+    late: object(row.late),
   };
 }
 
@@ -149,63 +200,321 @@ export function scoreOf(kernels, reference) {
   return Math.exp(ratios.reduce((s, r) => s + Math.log(r), 0) / ratios.length) * 100;
 }
 
+const isObject = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
+const nonNegative = (v) => typeof v === "number" && Number.isFinite(v) && v >= 0;
+
 /**
- * Lowest score T such that, among devices with score >= T that ran the effect,
- * fewer than `maxUnder` reported fps under the target. Needs `minSamples` devices.
+ * Applies a calibration patch onto `current` (mutated and returned): positive reference
+ * rates, a non-negative capacity, and per effect (merged by name, field by field) a
+ * non-negative threshold and cost and kernel weights. Invalid values are ignored; a
+ * valid `weights` object replaces the previous one.
  */
-export function effectThreshold(samples, targetFps, maxUnder, minSamples) {
-  return lowestThreshold(
-    samples.map((s) => ({ score: s.score, missed: s.fps < targetFps })),
-    maxUnder,
-    minSamples,
-  );
+export function applyPatch(current, patch) {
+  if (!isObject(patch)) return current;
+  if (isObject(patch.reference)) {
+    for (const k of KERNELS) if (patch.reference[k] > 0 && Number.isFinite(patch.reference[k])) current.reference[k] = patch.reference[k];
+  }
+  if (nonNegative(patch.capacity)) current.capacity = patch.capacity;
+  if (isObject(patch.effects)) {
+    for (const [name, def] of Object.entries(patch.effects)) {
+      if (!isObject(def)) continue;
+      const effect = (current.effects[name] ??= {});
+      if (nonNegative(def.threshold)) effect.threshold = def.threshold;
+      if (nonNegative(def.cost)) effect.cost = def.cost;
+      if (isObject(def.weights)) {
+        const weights = Object.fromEntries(KERNELS.filter((k) => nonNegative(def.weights[k])).map((k) => [k, def.weights[k]]));
+        if (Object.keys(weights).length) effect.weights = weights;
+      }
+    }
+  }
+  return current;
 }
 
-/** The whole analysis, as data. */
+/**
+ * @typedef {{ threshold?: number, cost?: number, weights?: Record<string, number> }} EffectCalibration
+ * @typedef {{ reference: Record<string, number>, capacity: number, effects: Record<string, EffectCalibration> }} Calibration
+ */
+
+/**
+ * The library's defaultCalibration (reference, capacity, effects) with each patch applied in order.
+ * @param {...unknown} patches
+ * @returns {Calibration}
+ */
+export function currentCalibration(...patches) {
+  /** @type {Calibration} */
+  const current = { reference: {}, capacity: 0, effects: {} };
+  applyPatch(current, defaultCalibration);
+  for (const patch of patches) applyPatch(current, patch);
+  return current;
+}
+
+/** `100 * exp(sum(w_k * ln(rate_k / reference_k)) / sum(w_k))` over kernels with a positive weight and rate, as the library. */
+export function weightedScore(kernels, reference, weights) {
+  let sum = 0;
+  let total = 0;
+  for (const k of KERNELS) {
+    const w = weights[k];
+    if (w > 0 && kernels[k] > 0 && reference[k] > 0) {
+      sum += w * Math.log(kernels[k] / reference[k]);
+      total += w;
+    }
+  }
+  return total > 0 ? 100 * Math.exp(sum / total) : null;
+}
+
+const EQUAL_WEIGHTS = Object.fromEntries(KERNELS.map((k) => [k, 1]));
+
+/**
+ * Moving the references multiplies every (weighted) score by the weighted geomean of
+ * current / proposed over the kernels (exact for devices that measured every kernel).
+ */
+export function rescaleFactor(reference, proposed, weights = EQUAL_WEIGHTS) {
+  let sum = 0;
+  let total = 0;
+  for (const k of KERNELS) {
+    const w = weights[k];
+    if (w > 0 && proposed[k] > 0 && reference[k] > 0) {
+      sum += w * Math.log(reference[k] / proposed[k]);
+      total += w;
+    }
+  }
+  return total > 0 ? Math.exp(sum / total) : null;
+}
+
+/** The score an effect is judged on: its weighted score when the current calibration gives it weights, else the stored score. */
+function effectScore(row, effect, calibration, reference) {
+  const weights = calibration.effects[effect]?.weights;
+  if (!weights) return row.score;
+  return weightedScore(row.kernels, reference, weights) ?? row.score;
+}
+
+/** The row's page ran `effect`: allowed or stepped down, and on v2 also used by the page. */
+export function ran(row, effect) {
+  if (row.v === 2 && !(row.used ?? []).includes(effect)) return false;
+  return row.effects.includes(effect) || row.stepped.includes(effect);
+}
+
+/**
+ * Whether the device failed `effect`: stepped down, else bad frames (v2: late fraction of
+ * the effect, else main, over `maxLate`; v1: fps of the effect, else main, under `targetFps`).
+ * null when there is no verdict.
+ */
+export function failed(row, effect, options) {
+  if (row.stepped.includes(effect)) return true;
+  if (row.v === 2) {
+    const late = num(row.late?.[effect]) ?? num(row.late?.main);
+    return late === null ? null : late > options.maxLate;
+  }
+  const fps = num(row.fps?.[effect]) ?? num(row.fps?.main);
+  return fps === null ? null : fps < options.targetFps;
+}
+
+/** First index of ascending `values` holding a value >= x (strict: > x). */
+function bound(values, x, strict = false) {
+  let lo = 0;
+  let hi = values.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (strict ? values[mid] <= x : values[mid] < x) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo;
+}
+
+/**
+ * Band criterion on `{ score, failed }` samples. Each unique score T is a candidate; its
+ * band is the samples with T <= score < T x (1 + band), populated with `minSamples` or more.
+ * Returns the lowest T whose band is populated and such that every populated band starting
+ * at or above T fails under `maxUnder`, or null.
+ */
+export function bandThreshold(samples, { band, maxUnder, minSamples }) {
+  const sorted = [...samples].sort((a, b) => a.score - b.score);
+  const scores = sorted.map((s) => s.score);
+  const failures = [0];
+  for (const s of sorted) failures.push(failures[failures.length - 1] + (s.failed ? 1 : 0));
+  const bands = [];
+  for (let i = 0; i < sorted.length; ) {
+    const t = scores[i];
+    const next = bound(scores, t, true);
+    const end = Math.max(next, bound(scores, t * (1 + band)));
+    bands.push({ threshold: t, start: i, samples: end - i, failures: failures[end] - failures[i] });
+    i = next;
+  }
+  let chosen = null;
+  for (let j = bands.length - 1; j >= 0; j--) {
+    const b = bands[j];
+    if (b.samples < minSamples) continue;
+    if (b.failures / b.samples >= maxUnder) break;
+    chosen = b;
+  }
+  if (!chosen) return null;
+  return { threshold: chosen.threshold, band: chosen.samples, failRate: chosen.failures / chosen.samples, devices: sorted.length - chosen.start };
+}
+
+/**
+ * Load capacity on `{ load, failed }` rows. Each unique load L is a candidate; its band is
+ * the rows with L / (1 + band) < load <= L, populated with `minSamples` or more. Returns the
+ * highest L whose band is populated and such that every populated band ending at or below
+ * L fails under `maxUnder`, or null.
+ */
+export function capacityFit(rows, { band, maxUnder, minSamples }) {
+  const sorted = [...rows].sort((a, b) => a.load - b.load);
+  const loads = sorted.map((r) => r.load);
+  const failures = [0];
+  for (const r of sorted) failures.push(failures[failures.length - 1] + (r.failed ? 1 : 0));
+  let chosen = null;
+  for (let i = 0; i < sorted.length; ) {
+    const l = loads[i];
+    const end = bound(loads, l, true);
+    const start = Math.min(i, bound(loads, l / (1 + band), true));
+    const n = end - start;
+    i = end;
+    if (n < minSamples) continue;
+    const failRate = (failures[end] - failures[start]) / n;
+    if (failRate >= maxUnder) break;
+    chosen = { capacity: l, band: n, failRate };
+  }
+  return chosen && { ...chosen, rows: sorted.length };
+}
+
+/**
+ * L2-regularised logistic regression of failure on x_k = ln(rate_k / reference_k), by plain
+ * gradient descent on standardised features (fixed iterations, deterministic). A kernel whose
+ * higher rate lowers the failure odds gets weight -beta_k; weights are clamped at 0,
+ * normalised to sum 1 and rounded to 2 decimals. Samples are `{ kernels, failed }` with
+ * every kernel measured.
+ */
+export function fitWeights(samples, reference, minSamples) {
+  const usable = samples.filter((s) => KERNELS.every((k) => s.kernels[k] > 0 && reference[k] > 0));
+  const failures = usable.filter((s) => s.failed).length;
+  /** @type {{ samples: number, failures: number, weights: Record<string, number> | null, reason: string | null }} */
+  const result = { samples: usable.length, failures, weights: null, reason: null };
+  const needed = Math.max(minSamples, MIN_FIT_SAMPLES);
+  if (usable.length < needed) return { ...result, reason: `fewer than ${needed} samples` };
+  if (failures < MIN_FIT_CLASS || usable.length - failures < MIN_FIT_CLASS) {
+    return { ...result, reason: `needs ${MIN_FIT_CLASS} failures and ${MIN_FIT_CLASS} passes` };
+  }
+  const n = usable.length;
+  const x = usable.map((s) => KERNELS.map((k) => Math.log(s.kernels[k] / reference[k])));
+  const y = usable.map((s) => (s.failed ? 1 : 0));
+  const mean = KERNELS.map((_, k) => x.reduce((sum, row) => sum + row[k], 0) / n);
+  const sd = KERNELS.map((_, k) => Math.sqrt(x.reduce((sum, row) => sum + (row[k] - mean[k]) ** 2, 0) / n));
+  const z = x.map((row) => row.map((v, k) => (sd[k] > 0 ? (v - mean[k]) / sd[k] : 0)));
+  let bias = 0;
+  const beta = KERNELS.map(() => 0);
+  for (let iteration = 0; iteration < FIT_ITERATIONS; iteration++) {
+    let gradBias = 0;
+    const grad = beta.map(() => 0);
+    for (let i = 0; i < n; i++) {
+      let logit = bias;
+      for (let k = 0; k < beta.length; k++) logit += beta[k] * z[i][k];
+      const error = 1 / (1 + Math.exp(-logit)) - y[i];
+      gradBias += error;
+      for (let k = 0; k < beta.length; k++) grad[k] += error * z[i][k];
+    }
+    bias -= (FIT_RATE * gradBias) / n;
+    for (let k = 0; k < beta.length; k++) beta[k] -= FIT_RATE * (grad[k] / n + FIT_L2 * beta[k]);
+  }
+  const raw = KERNELS.map((_, k) => (sd[k] > 0 ? Math.max(0, -beta[k] / sd[k]) : 0));
+  const total = raw.reduce((s, w) => s + w, 0);
+  if (!(total > 0)) return { ...result, reason: "no kernel predicts failure" };
+  /** @type {Record<string, number>} */
+  const weights = {};
+  KERNELS.forEach((k, i) => {
+    const w = Math.round((raw[i] / total) * 100) / 100;
+    if (w > 0) weights[k] = w;
+  });
+  return { ...result, weights };
+}
+
+/** The whole analysis, as data. Options missing from `options` take DEFAULT_OPTIONS. */
 export function analyze(rawRows, options) {
+  const opts = { ...DEFAULT_OPTIONS, ...options };
+  const calibration = opts.calibration ?? currentCalibration();
+  const reference = opts.reference ?? calibration.reference;
   const rows = rawRows.map(normalize);
   const warmRows = rows.filter((r) => r.warm !== null);
   /** @type {Record<string, number | null>} */
   const proposed = {};
   for (const k of KERNELS) {
     const rates = warmRows.map((r) => r.kernels[k]).filter((v) => v !== null && v > 0);
-    const p = percentile(rates, options.percentile);
+    const p = percentile(rates, opts.percentile);
     proposed[k] = p === null ? null : roundSignificant(p, 3);
   }
-  // Every score is 100 * geomean(rate / ref), so moving the references multiplies all scores
-  // by geomean(ref / proposed) over the kernels (exact for devices that measured every kernel).
-  const both = KERNELS.filter((k) => proposed[k] > 0 && options.reference[k] > 0);
-  const factor = both.length
-    ? Math.exp(both.reduce((s, k) => s + Math.log(options.reference[k] / proposed[k]), 0) / both.length)
-    : null;
+  const factor = rescaleFactor(reference, proposed);
 
   const calCounts = {};
   for (const r of rows) calCounts[r.cal] = (calCounts[r.cal] ?? 0) + 1;
-  const cal = options.cal ?? Object.entries(calCounts).sort((a, b) => b[1] - a[1])[0]?.[0] ?? null;
+  const versions = {};
+  for (const r of rows) versions[r.v] = (versions[r.v] ?? 0) + 1;
+  const cal = opts.cal ?? Object.entries(calCounts).sort((a, b) => b[1] - a[1])[0]?.[0] ?? null;
   const scored = rows.filter((r) => r.cal === cal && r.score !== null);
 
-  const effectNames = [...new Set(scored.flatMap((r) => (Array.isArray(r.effects) ? r.effects : [])))].sort();
-  const effects = effectNames.map((name) => {
-    const samples = scored
-      .filter((r) => r.effects.includes(name))
-      .map((r) => ({ score: r.score, fps: num(r.fps?.[name]) ?? num(r.fps?.main) }))
-      .filter((s) => s.fps !== null);
-    const found = effectThreshold(samples, options.targetFps, options.maxUnder, options.minSamples);
-    return {
+  const effectNames = [...new Set(scored.flatMap((r) => [...r.effects, ...r.stepped]))].filter((e) => typeof e === "string").sort();
+  const effects = [];
+  const weights = [];
+  for (const name of effectNames) {
+    const current = calibration.effects[name];
+    const samples = scored.flatMap((r) => {
+      if (!ran(r, name)) return [];
+      const verdict = failed(r, name, opts);
+      return verdict === null ? [] : [{ row: r, score: effectScore(r, name, calibration, reference), failed: verdict }];
+    });
+    const found = bandThreshold(samples, opts);
+    const effectFactor = current?.weights ? rescaleFactor(reference, proposed, current.weights) : factor;
+    effects.push({
       name,
+      currentThreshold: current?.threshold ?? null,
+      weighted: Boolean(current?.weights),
       samples: samples.length,
+      explored: samples.filter((s) => s.row.explored === name).length,
       lowestScore: samples.length ? Math.min(...samples.map((s) => s.score)) : null,
       threshold: found?.threshold ?? null,
-      proposedThreshold: found && factor !== null ? Math.round(found.threshold * factor) : null,
+      proposedThreshold: found && effectFactor !== null ? Math.round(found.threshold * effectFactor) : null,
+      failRate: found?.failRate ?? null,
       devices: found?.devices ?? 0,
-      under: found?.under ?? null,
-    };
+    });
+
+    const fitSamples = samples.filter((s) => s.row.warm !== null).map((s) => ({ kernels: s.row.kernels, failed: s.failed }));
+    const fit = fitWeights(fitSamples, reference, opts.minSamples);
+    let weightedFound = null;
+    if (fit.weights) {
+      const weightedSamples = fitSamples
+        .map((s) => ({ score: weightedScore(s.kernels, reference, fit.weights), failed: s.failed }))
+        .filter((s) => s.score !== null);
+      weightedFound = bandThreshold(weightedSamples, opts);
+    }
+    const weightedFactor = fit.weights ? rescaleFactor(reference, proposed, fit.weights) : null;
+    weights.push({
+      name,
+      ...fit,
+      threshold: weightedFound?.threshold ?? null,
+      proposedThreshold: weightedFound && weightedFactor !== null ? Math.round(weightedFound.threshold * weightedFactor) : null,
+      failRate: weightedFound?.failRate ?? null,
+    });
+  }
+
+  // Capacity: v2 rows only, since only they say which effects the page used.
+  const loadRows = scored.filter((r) => r.v === 2).flatMap((r) => {
+    const names = [...new Set([...r.effects, ...r.stepped])].filter((e) => ran(r, e));
+    let load = 0;
+    for (const e of names) {
+      const cost = calibration.effects[e]?.cost ?? 0;
+      load += (cost * 100) / Math.max(effectScore(r, e, calibration, reference), 1);
+    }
+    if (!(load > 0)) return [];
+    const stepped = names.some((e) => r.stepped.includes(e));
+    const late = ["main", ...names].map((s) => num(r.late?.[s])).filter((v) => v !== null);
+    if (!stepped && !late.length) return [];
+    return [{ load, failed: stepped || late.some((v) => v > opts.maxLate) }];
   });
+  const capacity = capacityFit(loadRows, opts);
 
   const proposedScores = warmRows.map((r) => scoreOf(r.kernels, proposed)).filter((s) => s !== null);
   return {
     rows: rows.length,
     warmRows: warmRows.length,
+    versions,
     calCounts,
     cal,
     scoredRows: scored.length,
@@ -213,6 +522,14 @@ export function analyze(rawRows, options) {
     factor,
     atOrAbove100: proposedScores.length ? proposedScores.filter((s) => s >= 100).length / proposedScores.length : null,
     effects,
+    weights,
+    capacity: {
+      current: calibration.capacity,
+      rows: loadRows.length,
+      proposed: capacity?.capacity ?? null,
+      band: capacity?.band ?? 0,
+      failRate: capacity?.failRate ?? null,
+    },
   };
 }
 
@@ -355,17 +672,20 @@ export function analyzeLabWork(rawRows, options, currentMs = {}) {
   return { protocolCounts, cal, runs: runs.length, effects };
 }
 
-/** Library default reference rates, overridden by the worker's calibration patch when it has any. */
-function defaultReference(patchUrl) {
-  const reference = {};
-  for (const k of KERNELS) if (defaultCalibration.reference[k] > 0) reference[k] = defaultCalibration.reference[k];
+/** A calibration patch file; a missing calibration.json is an empty patch, a missing --calibration file is an error. */
+function readPatch(url, required) {
+  let text;
   try {
-    const patch = JSON.parse(readFileSync(patchUrl, "utf8"));
-    for (const k of KERNELS) if (patch?.reference?.[k] > 0) reference[k] = patch.reference[k];
-  } catch {
-    // No patch.
+    text = readFileSync(url, "utf8");
+  } catch (error) {
+    if (required) throw new Error(`cannot read ${url}: ${error.message}`);
+    return {};
   }
-  return reference;
+  try {
+    return JSON.parse(text);
+  } catch (error) {
+    throw new Error(`${url} is not JSON: ${error.message}`);
+  }
 }
 
 /**
@@ -398,7 +718,7 @@ export function labDatabase(rows) {
 }
 
 function parseArgs(argv) {
-  const options = { percentile: 50, targetFps: 55, maxUnder: 0.05, minSamples: 10, cal: undefined, reference: undefined };
+  const options = { ...DEFAULT_OPTIONS, calibrationFile: undefined, current: undefined };
   let file;
   let lab;
   for (let i = 0; i < argv.length; i++) {
@@ -415,9 +735,12 @@ function parseArgs(argv) {
     };
     if (arg === "--percentile") options.percentile = number(0, 100);
     else if (arg === "--target-fps") options.targetFps = number(1, 1000);
+    else if (arg === "--max-late") options.maxLate = number(0, 1);
     else if (arg === "--max-under") options.maxUnder = number(0, 1);
+    else if (arg === "--band") options.band = number(0.001, 10);
     else if (arg === "--min-samples") options.minSamples = number(1, 1e9);
     else if (arg === "--cal") options.cal = value();
+    else if (arg === "--calibration") options.calibrationFile = value();
     else if (arg === "--lab") lab = value();
     else if (arg === "--current") options.current = value();
     else if (arg === "--reference") {
@@ -433,14 +756,17 @@ function parseArgs(argv) {
   }
   if (!file && !lab) throw new Error("missing export file");
   if (options.current !== undefined && !lab) throw new Error("--current needs --lab");
+  if (options.calibrationFile !== undefined && !file) throw new Error("--calibration needs a reports export");
   return { file, lab, options };
 }
 
 const fmt = (v, digits = 0) => (v === null || v === undefined ? "-" : v.toFixed(digits));
+const pct = (v) => (v === null || v === undefined ? "-" : (v * 100).toFixed(1) + "%");
 
 function print(result, options) {
   const out = [];
   out.push(`Reports: ${result.rows} (${result.warmRows} with a warm run)`);
+  out.push(`Report versions: ${Object.entries(result.versions).map(([k, v]) => `v${k}=${v}`).join(", ") || "-"}`);
   out.push(`Calibration versions: ${Object.entries(result.calCounts).map(([k, v]) => `${k}=${v}`).join(", ") || "-"}`);
   out.push("");
   out.push(`Reference rates (warm rate of the device at percentile ${options.percentile}, which becomes score 100):`);
@@ -456,20 +782,41 @@ function print(result, options) {
   );
   out.push(`Warm devices at or above 100 on the proposed scale: ${result.atOrAbove100 === null ? "-" : (result.atOrAbove100 * 100).toFixed(0) + "%"}`);
   out.push("");
-  out.push(
-    `Effect thresholds (cal ${result.cal}, ${result.scoredRows} reports): lowest score where under ${+(options.maxUnder * 100).toFixed(2)}% of devices at or above it`,
-  );
-  out.push(`ran the effect under ${options.targetFps} fps (fps of the effect, else main), with at least ${options.minSamples} devices.`);
-  out.push("  effect                 samples  lowest  current  proposed  devices  under");
+  out.push(`Effect thresholds (cal ${result.cal}, ${result.scoredRows} reports). A device failed an effect it ran when the governor`);
+  out.push(`stepped it down, or its late frames exceeded ${options.maxLate} (v2), or its fps was under ${options.targetFps} (v1). A band is the`);
+  out.push(`devices with T <= score < T x ${1 + options.band}, counted from ${options.minSamples} devices; the threshold is the lowest T`);
+  out.push(`whose band counts and from which every counted band above fails under ${+(options.maxUnder * 100).toFixed(2)}%.`);
+  out.push("Effects marked * have weights in the current calibration and are judged on their weighted score.");
+  out.push("  effect                 samples  explored  lowest      now  threshold  proposed  band fail  devices");
   for (const e of result.effects) {
     out.push(
-      `  ${e.name.padEnd(22)} ${String(e.samples).padStart(7)}  ${fmt(e.lowestScore).padStart(6)}  ${fmt(e.threshold).padStart(7)}  ${fmt(e.proposedThreshold).padStart(8)}  ${String(e.devices).padStart(7)}  ${e.under === null ? "    -" : (e.under * 100).toFixed(1).padStart(4) + "%"}`,
+      `  ${(e.name + (e.weighted ? "*" : "")).padEnd(22)} ${String(e.samples).padStart(7)}  ${String(e.explored).padStart(8)}  ${fmt(e.lowestScore).padStart(6)}  ${fmt(e.currentThreshold).padStart(7)}  ${fmt(e.threshold).padStart(9)}  ${fmt(e.proposedThreshold).padStart(8)}  ${pct(e.failRate).padStart(9)}  ${String(e.devices).padStart(7)}`,
     );
   }
   out.push("");
-  out.push("Notes: only devices that ran an effect report its fps, so no threshold can go below the lowest score");
-  out.push("that ran it. Proposed thresholds scale the stored final score, which includes hardware caps and");
-  out.push("pressure multipliers, so they are approximate for capped devices.");
+  out.push(`Effect weights (one score per effect): logistic fit of failure on ln(rate / current reference) over samples`);
+  out.push(`with a warm run and all four kernels, from max(${options.minSamples}, ${MIN_FIT_SAMPLES}) samples with ${MIN_FIT_CLASS} failures and ${MIN_FIT_CLASS} passes.`);
+  out.push("The threshold is the band threshold on the weighted score, on the current and on the proposed reference.");
+  out.push("  effect                 samples  failed  weights                                         threshold  proposed  band fail");
+  for (const w of result.weights) {
+    const shown = w.weights ? Object.entries(w.weights).map(([k, v]) => `${k}=${v.toFixed(2)}`).join(", ") : `- (${w.reason})`;
+    out.push(
+      `  ${w.name.padEnd(22)} ${String(w.samples).padStart(7)}  ${String(w.failures).padStart(6)}  ${shown.padEnd(46)}  ${fmt(w.threshold).padStart(9)}  ${fmt(w.proposedThreshold).padStart(8)}  ${pct(w.failRate).padStart(9)}`,
+    );
+  }
+  out.push("");
+  const c = result.capacity;
+  out.push(`Capacity (v2 reports, ${c.rows} with a used, costed effect and a verdict): load = sum(cost x 100 / max(score, 1)) over the`);
+  out.push(`effects the page ran; a page failed when one was stepped down or late frames of main or of one exceeded ${options.maxLate}.`);
+  out.push(`Load bands are L / ${1 + options.band} < load <= L; the capacity is the highest L from which every counted band below fails under`);
+  out.push(`${+(options.maxUnder * 100).toFixed(2)}%.`);
+  out.push(`  current ${fmt(c.current, 2)}, proposed ${fmt(c.proposed, 2)} (band of ${c.band}, ${pct(c.failRate)} failing)`);
+  out.push("");
+  out.push("Notes: only devices that ran an effect say anything about it, so thresholds can only move below the lowest score that");
+  out.push("ran an effect through exploration (share.explore turns one effect on a little below its threshold on some page views;");
+  out.push("those rows are the explored column). Proposed thresholds scale the stored final score, which includes hardware caps");
+  out.push("and pressure multipliers, so they are approximate for capped devices. Apply weights as `weights` on the effect and the");
+  out.push("capacity as `capacity` in calibration.json (or in the library defaults).");
   return out.join("\n");
 }
 
@@ -554,8 +901,14 @@ function printAuto(evaluation, current) {
 
 async function main() {
   let parsed;
+  let calibration;
   try {
     parsed = parseArgs(process.argv.slice(2));
+    if (parsed?.file) {
+      const patches = [readPatch(new URL("../calibration.json", import.meta.url), false)];
+      if (parsed.options.calibrationFile) patches.push(readPatch(pathToFileURL(parsed.options.calibrationFile), true));
+      calibration = currentCalibration(...patches);
+    }
   } catch (error) {
     console.error(`${error.message}\n\n${USAGE}`);
     process.exit(2);
@@ -567,7 +920,8 @@ async function main() {
   const { file, lab, options } = parsed;
   const sections = [];
   if (file) {
-    options.reference ??= defaultReference(new URL("../calibration.json", import.meta.url));
+    options.calibration = calibration;
+    options.reference ??= { ...calibration.reference };
     const missing = KERNELS.filter((k) => !(options.reference[k] > 0));
     if (missing.length) {
       console.error(`No current reference rate for ${missing.join(", ")}; pass --reference.`);

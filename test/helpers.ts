@@ -148,6 +148,17 @@ export function validReport(): Record<string, unknown> {
   };
 }
 
+/** The same page view as a v2 report: what the page used, no exploration, late-frame fractions. */
+export function validReportV2(): Record<string, unknown> {
+  return {
+    ...validReport(),
+    v: 2,
+    used: ["canvasLowRes", "hover"],
+    explored: null,
+    late: { main: 0.03, canvasLowRes: 0.08 },
+  };
+}
+
 export interface PostOptions {
   body?: string;
   headers?: Record<string, string>;
