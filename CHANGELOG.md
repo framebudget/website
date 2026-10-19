@@ -16,6 +16,20 @@ No changes.
 
 - **worker:** rate limit the report api ([40cc69f](https://github.com/framebudget/website/commit/40cc69f0d04bb44d0a5927b01d6221039f9945ee)) ([#17](https://github.com/framebudget/website/pull/17))
 
+## [1.5.0] - 2026-10-07
+
+### Site
+
+#### Features
+
+- **worker:** accept reports from any origin ([962f274](https://github.com/framebudget/website/commit/962f2741e28aa8e8fd108aa2435b799a161f93b8)) ([#15](https://github.com/framebudget/website/pull/15))
+
+### Worker
+
+#### Features
+
+- **worker:** accept reports from any origin ([962f274](https://github.com/framebudget/website/commit/962f2741e28aa8e8fd108aa2435b799a161f93b8)) ([#15](https://github.com/framebudget/website/pull/15))
+
 ## [1.4.1] - 2026-10-06
 
 ### Site
