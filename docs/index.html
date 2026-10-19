@@ -38,6 +38,7 @@
             <code class="install__cmd">npm i framebudget</code>
             <button class="copy press" type="button" data-copy="npm i framebudget" aria-label="Copy the install command" data-cuelume-tap><span class="copy__label">Copy</span></button>
           </div>
+          <p class="install__note">The core, for any site. React, Vue and Angular have <a href="#code">their own package</a>.</p>
           <div class="hero__actions">
             <span class="magnetic"><a class="button button--primary press" href="#simulator" data-cuelume-tap data-cuelume-emphasis="strong">Open the simulator</a></span>
             <span class="magnetic"><a class="button press" href="/api" data-cuelume-navigate>Read the API</a></span>
@@ -283,16 +284,18 @@ budget.on("change", (snapshot) =&gt; {
   <section class="section" id="code" aria-labelledby="code-title">
     <div class="shell">
       <div class="section__head reveal">
-        <h2 id="code-title" data-reveal="blur">Four ways in</h2>
-        <p class="section__lede">Ask in JavaScript, ask in React, decide before paint with the boot script, or let CSS read the decision straight from <code>&lt;html&gt;</code>.</p>
+        <h2 id="code-title" data-reveal="blur">Six ways in</h2>
+        <p class="section__lede"><code>framebudget</code> is the core for any site: ask in JavaScript, decide before paint with the boot script, or let CSS read the decision straight from <code>&lt;html&gt;</code>. React, Vue and Angular each get their own package, which installs the core for you.</p>
       </div>
       <div class="code-tabs reveal">
-        <div class="segmented segmented--4 tabs" role="tablist" aria-label="Code examples" data-tabs>
+        <div class="segmented segmented--6 tabs" role="tablist" aria-label="Code examples" data-tabs>
           <span class="segmented__thumb" aria-hidden="true"></span>
           <button role="tab" id="tab-vanilla" aria-controls="panel-vanilla" aria-selected="true" class="press" data-cuelume-select>Vanilla</button>
-          <button role="tab" id="tab-react" aria-controls="panel-react" aria-selected="false" tabindex="-1" class="press" data-cuelume-select>React</button>
           <button role="tab" id="tab-boot" aria-controls="panel-boot" aria-selected="false" tabindex="-1" class="press" data-cuelume-select>Boot script</button>
           <button role="tab" id="tab-css" aria-controls="panel-css" aria-selected="false" tabindex="-1" class="press" data-cuelume-select>CSS</button>
+          <button role="tab" id="tab-react" aria-controls="panel-react" aria-selected="false" tabindex="-1" class="press" data-cuelume-select>React</button>
+          <button role="tab" id="tab-vue" aria-controls="panel-vue" aria-selected="false" tabindex="-1" class="press" data-cuelume-select>Vue</button>
+          <button role="tab" id="tab-angular" aria-controls="panel-angular" aria-selected="false" tabindex="-1" class="press" data-cuelume-select>Angular</button>
         </div>
         <div class="code-stack panel spot">
           <div class="code-panel" role="tabpanel" id="panel-vanilla" aria-labelledby="tab-vanilla" tabindex="0">
@@ -308,18 +311,14 @@ budget.on("change", (snapshot, reason) =&gt; {
   // reason: "warm", "governor", "pressure", "motion", ...
   setEffects(snapshot.effects);
 });</code></pre>
-          </div>
-          <div class="code-panel" role="tabpanel" id="panel-react" aria-labelledby="tab-react" tabindex="0" data-inactive>
-            <p class="code-panel__file">Hero.tsx</p>
-<pre class="code"><code data-lang="ts">import { useBudget, useTier } from "framebudget/react";
-
-export function Hero() {
-  // false during server rendering and hydration, then the real answer
-  const parallax = useBudget("parallax");
-  const tier = useTier();
-
-  return &lt;Layers parallax={parallax} data-tier={tier} /&gt;;
-}</code></pre>
+            <div class="code-panel__setup">
+              <div class="install install--panel">
+                <span class="install__prompt" aria-hidden="true">$</span>
+                <code class="install__cmd">npm i framebudget</code>
+                <button class="copy press" type="button" data-copy="npm i framebudget" aria-label="Copy the install command for the core" data-cuelume-tap><span class="copy__label">Copy</span></button>
+              </div>
+              <p class="code-panel__note">The core, with one dependency. No framework needed.</p>
+            </div>
           </div>
           <div class="code-panel" role="tabpanel" id="panel-boot" aria-labelledby="tab-boot" tabindex="0" data-inactive>
             <p class="code-panel__file">vite.config.ts</p>
@@ -330,6 +329,14 @@ const boot = createBootScript({ calibration: { effects } });
 
 // First script in &lt;head&gt;, before your CSS.
 const html = page.replace("&lt;head&gt;", `&lt;head&gt;&lt;script&gt;${boot}&lt;/script&gt;`);</code></pre>
+            <div class="code-panel__setup">
+              <div class="install install--panel">
+                <span class="install__prompt" aria-hidden="true">$</span>
+                <code class="install__cmd">npm i framebudget</code>
+                <button class="copy press" type="button" data-copy="npm i framebudget" aria-label="Copy the install command for the core" data-cuelume-tap><span class="copy__label">Copy</span></button>
+              </div>
+              <p class="code-panel__note">The boot script ships in the core, as <code>framebudget/boot</code>.</p>
+            </div>
           </div>
           <div class="code-panel" role="tabpanel" id="panel-css" aria-labelledby="tab-css" tabindex="0" data-inactive>
             <p class="code-panel__file">site.css</p>
@@ -341,6 +348,84 @@ html[data-framebudget-effects~="blur"] .header {
 html[data-framebudget="Lite"] .hero-video {
   display: none;
 }</code></pre>
+            <div class="code-panel__setup">
+              <div class="install install--panel">
+                <span class="install__prompt" aria-hidden="true">$</span>
+                <code class="install__cmd">npm i framebudget</code>
+                <button class="copy press" type="button" data-copy="npm i framebudget" aria-label="Copy the install command for the core" data-cuelume-tap><span class="copy__label">Copy</span></button>
+              </div>
+              <p class="code-panel__note">CSS needs only the boot script from the core on the page.</p>
+            </div>
+          </div>
+          <div class="code-panel" role="tabpanel" id="panel-react" aria-labelledby="tab-react" tabindex="0" data-inactive>
+            <p class="code-panel__file">Hero.tsx</p>
+<pre class="code"><code data-lang="ts">import { useBudget, useTier } from "@framebudget/react";
+
+export function Hero() {
+  // false during server rendering and hydration, then the real answer
+  const parallax = useBudget("parallax");
+  const tier = useTier();
+
+  return &lt;Layers parallax={parallax} data-tier={tier} /&gt;;
+}</code></pre>
+            <div class="code-panel__setup">
+              <div class="install install--panel">
+                <span class="install__prompt" aria-hidden="true">$</span>
+                <code class="install__cmd">npm i @framebudget/react</code>
+                <button class="copy press" type="button" data-copy="npm i @framebudget/react" aria-label="Copy the install command for React" data-cuelume-tap><span class="copy__label">Copy</span></button>
+              </div>
+              <p class="code-panel__note">React 18 or later. Installs <code>@framebudget/core</code> for you.</p>
+            </div>
+          </div>
+          <div class="code-panel" role="tabpanel" id="panel-vue" aria-labelledby="tab-vue" tabindex="0" data-inactive>
+            <p class="code-panel__file">Hero.vue</p>
+<pre class="code"><code data-lang="ts">&lt;script setup lang="ts"&gt;
+import { useBudget, useTier } from "@framebudget/vue";
+
+const parallax = useBudget("parallax"); // computed ref, follows the budget
+const tier = useTier();
+&lt;/script&gt;
+
+&lt;template&gt;
+  &lt;Layers v-if="parallax" :data-tier="tier" /&gt;
+  &lt;StaticHero v-else /&gt;
+&lt;/template&gt;</code></pre>
+            <div class="code-panel__setup">
+              <div class="install install--panel">
+                <span class="install__prompt" aria-hidden="true">$</span>
+                <code class="install__cmd">npm i @framebudget/vue</code>
+                <button class="copy press" type="button" data-copy="npm i @framebudget/vue" aria-label="Copy the install command for Vue" data-cuelume-tap><span class="copy__label">Copy</span></button>
+              </div>
+              <p class="code-panel__note">Vue 3.3 or later. Installs <code>@framebudget/core</code> for you.</p>
+            </div>
+          </div>
+          <div class="code-panel" role="tabpanel" id="panel-angular" aria-labelledby="tab-angular" tabindex="0" data-inactive>
+            <p class="code-panel__file">hero.component.ts</p>
+<pre class="code"><code data-lang="ts">import { Component } from "@angular/core";
+import { injectBudget, injectTier } from "@framebudget/angular";
+
+@Component({
+  selector: "app-hero",
+  template: `
+    @if (parallax()) {
+      &lt;app-layers [attr.data-tier]="tier()" /&gt;
+    } @else {
+      &lt;app-static-hero /&gt;
+    }
+  `,
+})
+export class Hero {
+  readonly parallax = injectBudget("parallax"); // Signal&lt;boolean&gt;
+  readonly tier = injectTier();
+}</code></pre>
+            <div class="code-panel__setup">
+              <div class="install install--panel">
+                <span class="install__prompt" aria-hidden="true">$</span>
+                <code class="install__cmd">npm i @framebudget/angular</code>
+                <button class="copy press" type="button" data-copy="npm i @framebudget/angular" aria-label="Copy the install command for Angular" data-cuelume-tap><span class="copy__label">Copy</span></button>
+              </div>
+              <p class="code-panel__note">Angular 18 or later. Installs <code>@framebudget/core</code> for you, no compiler step.</p>
+            </div>
           </div>
         </div>
       </div>
@@ -383,7 +468,7 @@ html[data-framebudget="Lite"] .hero-video {
         </details>
         <details>
           <summary>What happens during server rendering?</summary>
-          <div class="faq__body"><p>Without a window, <code>allows()</code> answers false and the tier is Lite. In React, <code>useBudget</code> answers false during server rendering and hydration, so effects start on the client only.</p></div>
+          <div class="faq__body"><p>Without a window, <code>allows()</code> answers false and the tier is Lite. The React, Vue and Angular bindings answer false and Lite during server rendering and hydration too, so effects start on the client only.</p></div>
         </details>
         <details>
           <summary>Are the reference numbers final?</summary>

@@ -164,7 +164,7 @@ export function defaultsTable(): string {
 /* Syntax highlighting ------------------------------------------------------ */
 
 const KEYWORDS = new Set(
-  "import from export function const let return if else new true false null await async typeof".split(" "),
+  "import from export function class readonly const let return if else new true false null await async typeof".split(" "),
 );
 
 const decode = (s: string): string => s.replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&amp;/g, "&");
