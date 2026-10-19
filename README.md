@@ -8,7 +8,7 @@ The website of [framebudget](https://github.com/framebudget/core), the browser l
 | `shared/site-effects.json` | The site's effect numbers (threshold, cost, ms, motion and data flags per effect) and tier floors: the baseline the automatic calibration starts from and never drifts far from. The site reads them from this file (`docs/src/effects.ts` adds labels, colors and copy) and ships them as framebudget's `calibrationDefaults`, so the automatic thresholds served by `/api/calibration` refine them. |
 | [`docs/`](docs/README.md) | The site: landing page, API reference, privacy page, the opt-in lab (`/lab`), error pages and the files for AI agents (`llms.txt`, `llm.txt`, `llms-full.txt`). A static Vite build with its own `package.json`, and a live demo of the library. |
 
-Related repositories: the library is [github.com/framebudget/core](https://github.com/framebudget/core) (the npm packages `framebudget`, `@framebudget/core` and `@framebudget/react`), and the brand (fonts, logos, tokens, the release card template) is [github.com/framebudget/assets](https://github.com/framebudget/assets).
+Related repositories: the library is [github.com/framebudget/core](https://github.com/framebudget/core) (the npm packages `framebudget`, `@framebudget/core`, `@framebudget/react`, `@framebudget/vue` and `@framebudget/angular`), and the brand (fonts, logos, tokens, the release card template) is [github.com/framebudget/assets](https://github.com/framebudget/assets).
 
 ## The library as a dependency
 

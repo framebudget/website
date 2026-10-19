@@ -1,6 +1,6 @@
 import { all, tablist } from "./ui";
 
-/** The code examples ("Four ways in"): selecting a tab shows its panel and hides the others. */
+/** The code examples ("Six ways in"): selecting a tab shows its panel and hides the others. */
 export function mountCodeTabs(): void {
   for (const list of all("[data-tabs]")) {
     const tabs = all<HTMLButtonElement>('[role="tab"]', list);

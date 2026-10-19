@@ -4,8 +4,8 @@
 <meta charset="utf-8">
 <!-- framebudget:boot -->
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>framebudget API reference: budget, boot script, React</title>
-<meta name="description" content="framebudget API reference: the budget object, boot script, effects and tiers, device simulation, governor, calibration, telemetry and React hooks.">
+<title>framebudget API reference: budget, boot script, React, Vue, Angular</title>
+<meta name="description" content="framebudget API reference: the budget object, boot script, effects and tiers, device simulation, governor, calibration, telemetry and the React, Vue and Angular bindings.">
 <meta name="theme-color" content="#0f1225">
 <!-- fb:seo:api -->
 <link rel="icon" href="/logo/favicon.svg" type="image/svg+xml">
@@ -45,6 +45,8 @@
         <li><a href="#calibration">Calibration</a></li>
         <li><a href="#telemetry">Telemetry</a></li>
         <li><a href="#react">React</a></li>
+        <li><a href="#vue">Vue</a></li>
+        <li><a href="#angular">Angular</a></li>
         <li><a href="#debug">Debugging</a></li>
       </ul>
     </nav>
@@ -57,14 +59,17 @@
           <code class="install__cmd">npm i framebudget</code>
           <button class="copy press" type="button" data-copy="npm i framebudget" aria-label="Copy the install command" data-cuelume-tap><span class="copy__label">Copy</span></button>
         </div>
-        <p>ESM only, with type declarations. <code>react</code> is an optional peer dependency, needed only for <code>framebudget/react</code>.</p>
+        <p><code>npm i framebudget</code> installs the core, framework-free, for any site. ESM only, with type declarations and one dependency: it re-exports <code>@framebudget/core</code>, the same code.</p>
+        <p>React, Vue and Angular each have their own package, which installs <code>@framebudget/core</code> for you and lists its framework as a peer dependency: <code>npm i @framebudget/react</code>, <code>npm i @framebudget/vue</code> or <code>npm i @framebudget/angular</code>. Installing only the binding is fine. With <code>framebudget</code> next to a binding, both resolve to the same <code>@framebudget/core</code>, so the page still has one <code>budget</code>.</p>
         <table class="table">
           <thead><tr><th scope="col">Entry</th><th scope="col">What it holds</th></tr></thead>
           <tbody>
             <tr><th scope="row"><code>framebudget</code></th><td><code>budget</code>, <code>configure</code>, <code>createBudget</code>, <code>Tier</code>, <code>defaultCalibration</code> and the types.</td></tr>
             <tr><th scope="row"><code>framebudget/boot</code></th><td><code>bootScript</code> and <code>createBootScript(options)</code>, the inline script for <code>&lt;head&gt;</code>.</td></tr>
-            <tr><th scope="row"><code>framebudget/react</code></th><td><code>useBudget</code>, <code>useTier</code> and <code>BudgetProvider</code>.</td></tr>
             <tr><th scope="row"><code>framebudget/panel</code></th><td><code>mountPanel(budget)</code>, the diagnostics overlay.</td></tr>
+            <tr><th scope="row"><code>@framebudget/react</code></th><td>React 18 or later: <code>useBudget</code>, <code>useTier</code> and <code>BudgetProvider</code>.</td></tr>
+            <tr><th scope="row"><code>@framebudget/vue</code></th><td>Vue 3.3 or later: <code>useBudget</code>, <code>useTier</code> and <code>provideBudget</code>.</td></tr>
+            <tr><th scope="row"><code>@framebudget/angular</code></th><td>Angular 18 or later: <code>injectBudget</code>, <code>injectTier</code> and <code>provideBudget</code>.</td></tr>
           </tbody>
         </table>
       </section>
@@ -228,7 +233,7 @@ configure({ share: null }); // or false: off, also after load</code></pre>
 
       <section id="react" aria-labelledby="react-title">
         <h2 id="react-title">React</h2>
-<pre class="code"><code data-lang="ts">import { useBudget, useTier } from "framebudget/react";
+<pre class="code"><code data-lang="ts">import { useBudget, useTier } from "@framebudget/react";
 
 function Page() {
   const animate = useBudget("pageTransition"); // boolean, re-renders on change
@@ -236,6 +241,47 @@ function Page() {
   return animate ? &lt;AnimatedRoute /&gt; : &lt;Route /&gt;;
 }</code></pre>
         <p>During server rendering and hydration, <code>useBudget</code> answers false and <code>useTier</code> answers Lite, so effects only start on the client. <code>BudgetProvider</code> is only needed for a budget other than the page's.</p>
+      </section>
+
+      <section id="vue" aria-labelledby="vue-title">
+        <h2 id="vue-title">Vue</h2>
+<pre class="code"><code data-lang="ts">&lt;script setup lang="ts"&gt;
+import { useBudget, useTier } from "@framebudget/vue";
+
+const props = defineProps&lt;{ effect: string }&gt;();
+
+const animate = useBudget(() =&gt; props.effect); // computed ref, follows the prop
+const tier = useTier();
+&lt;/script&gt;
+
+&lt;template&gt;
+  &lt;AnimatedRoute v-if="animate" :data-tier="tier" /&gt;
+  &lt;Route v-else /&gt;
+&lt;/template&gt;</code></pre>
+        <p><code>useBudget</code> returns a computed ref. The effect name may be a string, a ref or a getter such as a prop. <code>useTier</code> returns a computed ref of the tier. In a component both answer false and Lite until mount, so server rendering and hydration agree. <code>provideBudget(budget)</code>, called in a parent's <code>setup</code>, is only needed for a budget other than the page's.</p>
+      </section>
+
+      <section id="angular" aria-labelledby="angular-title">
+        <h2 id="angular-title">Angular</h2>
+<pre class="code"><code data-lang="ts">import { Component, input } from "@angular/core";
+import { injectBudget, injectTier } from "@framebudget/angular";
+
+@Component({
+  selector: "app-route",
+  template: `
+    @if (animate()) {
+      &lt;app-animated-route [attr.data-tier]="tier()" /&gt;
+    } @else {
+      &lt;app-plain-route /&gt;
+    }
+  `,
+})
+export class Route {
+  readonly effect = input("pageTransition");
+  readonly animate = injectBudget(this.effect); // Signal&lt;boolean&gt;
+  readonly tier = injectTier();
+}</code></pre>
+        <p>Call <code>injectBudget</code> and <code>injectTier</code> in an injection context, such as a field initializer or the constructor. <code>injectBudget</code> returns a <code>Signal&lt;boolean&gt;</code>; the effect name may be a string or a signal such as an input. Both answer false and Lite until the first browser render. <code>provideBudget(budget)</code> returns a provider for the application, a route or a component, and is only needed for a budget other than the page's. The package has no decorators, so it needs no Angular compiler step.</p>
       </section>
 
       <section id="debug" aria-labelledby="debug-title">
