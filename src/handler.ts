@@ -48,8 +48,9 @@ const INSERT_SQL = `INSERT INTO reports (
   created_day, cal, score, cold, warm, tick_ms,
   kernel_float, kernel_typed, kernel_alloc, kernel_path,
   cores, memory_gb, pressure, reduced_motion, tier, effects, stepped, fps, fps_main,
-  engine, engine_version, os, mobile, country
-) SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+  engine, engine_version, os, mobile, country,
+  v, used, explored, late, late_main
+) SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
 WHERE ${UNDER_DAILY_CAP}`;
 
 /**
@@ -91,6 +92,10 @@ export function reportRow(report: Report, request: Request, nowMs: number): (str
     client.os,
     client.mobile ? 1 : 0,
     client.country,
+    report.v,
+    ...(report.v === 2
+      ? [JSON.stringify(report.used), report.explored, JSON.stringify(report.late), report.late.main ?? null]
+      : [null, null, null, null]),
   ];
 }
 

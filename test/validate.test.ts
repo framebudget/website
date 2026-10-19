@@ -1,7 +1,7 @@
 import { createBudget, type CreateBudgetOptions, type TelemetryReport } from "framebudget";
 import { describe, expect, it, vi } from "vitest";
 import { validateReport } from "../src/validate";
-import { validReport } from "./helpers";
+import { validReport, validReportV2 } from "./helpers";
 
 /** The report as mutable JSON; tests write deliberately wrong values into it. */
 interface Loose {
@@ -13,8 +13,8 @@ interface Loose {
 }
 type Mutate = (r: Loose) => void;
 
-const variant = (mutate: Mutate) => {
-  const r = validReport() as Loose;
+const variant = (mutate: Mutate, base: () => Record<string, unknown> = validReport) => {
+  const r = base() as Loose;
   mutate(r);
   return validateReport(JSON.parse(JSON.stringify(r)));
 };
@@ -92,7 +92,8 @@ describe("validateReport", () => {
   });
 
   it.each<[string, Mutate]>([
-    ["v 2", (r) => (r.v = 2)],
+    ["v 3", (r) => (r.v = 3)],
+    ["v 2 with a v1 shape", (r) => (r.v = 2)],
     ["v as string", (r) => (r.v = "1")],
     ["empty cal", (r) => (r.cal = "")],
     ["cal over 64 chars", (r) => (r.cal = "x".repeat(65))],
@@ -123,6 +124,67 @@ describe("validateReport", () => {
     ["too many fps keys", (r) => (r.fps = Object.fromEntries(Array.from({ length: 41 }, (_, i) => ["s" + i, 60])))],
   ])("rejects %s", (_name, mutate) => {
     expect(variant(mutate)).toBeNull();
+  });
+
+  it("accepts a v2 report and its minimal form", () => {
+    expect(validateReport(validReportV2())).toEqual(validReportV2());
+    expect(
+      variant((r) => {
+        r.cold = r.warm = r.tickMs = null;
+        r.kernels = {};
+        r.hints = { reducedMotion: true };
+        r.effects = r.used = r.stepped = [];
+        r.fps = r.late = {};
+      }, validReportV2),
+    ).not.toBeNull();
+    expect(variant((r) => (r.explored = "canvasHiRes"), validReportV2)).not.toBeNull();
+  });
+
+  it.each<[string, Mutate]>([
+    ["v2 missing late", (r) => delete r.late],
+    ["v2 missing used", (r) => delete r.used],
+    ["v2 missing explored", (r) => delete r.explored],
+    ["v2 with an extra key", (r) => (r.ua = "x")],
+    ["v1 shape under v 1", (r) => (r.v = 1)],
+    ["explored as number", (r) => (r.explored = 1)],
+    ["explored with a bad name", (r) => (r.explored = "<script>")],
+    ["explored empty", (r) => (r.explored = "")],
+    ["late over 1", (r) => ((r.late as Record<string, unknown>).main = 1.01)],
+    ["late negative", (r) => ((r.late as Record<string, unknown>).main = -0.01)],
+    ["late as string", (r) => ((r.late as Record<string, unknown>).main = "0.1")],
+    ["late null", (r) => ((r.late as Record<string, unknown>).main = null)],
+    ["late as array", (r) => (r.late = [0.1])],
+    ["bad late key", (r) => ((r.late as Record<string, unknown>)["main frame"] = 0.1)],
+    ["too many late keys", (r) => (r.late = Object.fromEntries(Array.from({ length: 41 }, (_, i) => ["s" + i, 0])))],
+    ["duplicate used", (r) => (r.used as unknown[]).push("hover")],
+    ["bad used name", (r) => (r.used as unknown[]).push("<script>")],
+    ["used not array", (r) => (r.used = "hover")],
+  ])("rejects v2 %s", (_name, mutate) => {
+    expect(variant(mutate, validReportV2)).toBeNull();
+  });
+
+  it.each<[string, Mutate]>([
+    ["used", (r) => (r.used = [])],
+    ["explored", (r) => (r.explored = null)],
+    ["late", (r) => (r.late = {})],
+  ])("rejects the v2 key %s on a v1 report", (_name, mutate) => {
+    expect(variant(mutate)).toBeNull();
+  });
+
+  it("rejects a non-finite late fraction", () => {
+    const r = { ...validReportV2(), late: { main: Number.NaN } };
+    expect(validateReport(r)).toBeNull();
+    expect(validateReport({ ...r, late: { main: Number.POSITIVE_INFINITY } })).toBeNull();
+  });
+
+  it("accepts v2 limits at their edges", () => {
+    expect(
+      variant((r) => {
+        r.used = Array.from({ length: 64 }, (_, i) => "e" + i);
+        r.explored = "a".repeat(32);
+        r.late = Object.fromEntries(Array.from({ length: 40 }, (_, i) => ["s" + i, i === 0 ? 1 : 0]));
+      }, validReportV2),
+    ).not.toBeNull();
   });
 
   it.each([null, [], "report", 1])("rejects non-object %j", (input) => {
