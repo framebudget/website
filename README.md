@@ -12,16 +12,15 @@ Related repositories: the library is [github.com/framebudget/core](https://githu
 
 ## The library as a dependency
 
-The site and the Worker's tests use the published library, never its source. Until the library is on npmjs, `docs/package.json` (dependency) and the root `package.json` (devDependency) install it from the release assets of core [v0.4.0](https://github.com/framebudget/core/releases/tag/v0.4.0): `"framebudget": "https://github.com/framebudget/core/releases/download/v0.4.0/framebudget-0.4.0.tgz"`, with npm `overrides` pointing its dependencies `@framebudget/core` and `@framebudget/react` at their own assets of the same release (`framebudget-core-0.4.0.tgz`, `framebudget-react-0.4.0.tgz`), so one copy of each is installed and nothing comes from a registry. Release assets are immutable and public, so no registry or token is involved, and both lockfiles pin each tarball's integrity. Check the tarballs against the core release attestation with:
+The site and the Worker's tests use the published library, never its source. `docs/package.json` (dependency) and the root `package.json` (devDependency) install it from the release assets of core [v0.8.1](https://github.com/framebudget/core/releases/tag/v0.8.1) rather than from npmjs: `"framebudget": "https://github.com/framebudget/core/releases/download/v0.8.1/framebudget-0.8.1.tgz"`, with an npm `override` pointing its one dependency, `@framebudget/core`, at its own asset of the same release (`framebudget-core-0.8.1.tgz`), so one copy is installed and nothing comes from a registry. Release assets are immutable and public, so no registry or token is involved, and both lockfiles pin each tarball's integrity. Check the tarballs against the core release attestation with:
 
 ```sh
-gh release download v0.4.0 --repo framebudget/core --pattern 'framebudget-*0.4.0.tgz'
-gh release verify-asset v0.4.0 framebudget-0.4.0.tgz --repo framebudget/core
-gh release verify-asset v0.4.0 framebudget-core-0.4.0.tgz --repo framebudget/core
-gh release verify-asset v0.4.0 framebudget-react-0.4.0.tgz --repo framebudget/core
+gh release download v0.8.1 --repo framebudget/core --pattern 'framebudget-*0.8.1.tgz'
+gh release verify-asset v0.8.1 framebudget-0.8.1.tgz --repo framebudget/core
+gh release verify-asset v0.8.1 framebudget-core-0.8.1.tgz --repo framebudget/core
 ```
 
-The package's `README.md` becomes `llms-full.txt`, and the Worker's calibration script reads `defaultCalibration` from it. To move to a new library release, change the three URLs (the dependency and both `overrides`) in both `package.json` files, run `npm install` at the root and in `docs/`, and commit both lockfiles.
+The package's `README.md` becomes `llms-full.txt`, and the Worker's calibration script reads `defaultCalibration` from it. To move to a new library release, change the two URLs (the dependency and its `override`) in both `package.json` files, run `npm install` at the root and in `docs/`, and commit both lockfiles.
 
 ## Local development
 
