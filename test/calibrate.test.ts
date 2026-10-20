@@ -322,7 +322,8 @@ describe("calibrate", () => {
     expect(merged.effects.blur).toEqual({ threshold: 80, cost: 6, weights: { path: 1 } });
     expect(merged.effects.mine).toEqual({ cost: 2 });
     expect(merged.capacity).toBe(12);
-    expect(merged.reference).toEqual(REFERENCE);
+    // The library's defaults since 0.9.0: raster is measured warm only, and its cold rate of 0 is no rate.
+    expect(merged.reference).toEqual({ ...REFERENCE, raster: 26 });
     expect(merged.coldReference).toEqual({ ...COLD_REFERENCE, path: 2000 });
     // Weights that are all zero are no weights.
     expect(currentCalibration({ effects: { blur: { weights: { path: 0, float: 0 } } } }).effects.blur).toEqual({ threshold: 90, cost: 6 });

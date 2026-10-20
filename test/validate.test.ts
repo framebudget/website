@@ -51,12 +51,13 @@ describe("validateReport", () => {
     const page = fakePage();
     const budget = createBudget({ scope: page.scope, random: () => 0, pause: () => Promise.resolve() });
     budget.configure({ share: { sampleRate: 1, calibrationUrl: "/api/calibration" }, governor: { auto: false } });
-    // Load runs on a timer; after the warm benchmark, sharing arms the report on pagehide.
+    // Load runs on a timer; after the warm benchmark, sharing arms the report on pagehide. The governor
+    // listens to pagehide from load too, so fire it until the report goes out (it is sent once).
     await vi.waitFor(() => {
       page.timers.splice(0).forEach((timer) => timer());
-      expect(page.listeners.pagehide).toBeDefined();
+      page.listeners.pagehide?.forEach((listener) => listener());
+      expect(page.beacons.length).toBeGreaterThan(0);
     });
-    page.listeners.pagehide!.forEach((listener) => listener());
 
     expect(page.beacons.map((b) => b.url)).toEqual(["https://framebudget.dev/api/report"]);
     const report = JSON.parse(page.beacons[0]!.body) as TelemetryReport;
