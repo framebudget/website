@@ -97,6 +97,7 @@ describe("POST /api/lab/runs", () => {
         kernel_typed: 151000,
         kernel_alloc: 18200,
         kernel_path: 3010,
+        kernel_raster: null,
         cores: 8,
         memory_gb: 4,
         refresh_hz: 60,
@@ -174,6 +175,15 @@ describe("POST /api/lab/runs", () => {
 
   const device = (patch: Record<string, unknown>) => ({ ...labRun(), device: { ...(labRun().device as object), ...patch } });
 
+  it("stores an optional raster kernel, null or present, at 3 significant digits", async () => {
+    const { db, send } = setup();
+    const kernels = { float: 7130, typed: 151000, alloc: 18200, path: 3010 };
+    expect((await send(post("/api/lab/runs", device({ kernels: { ...kernels, raster: 812.46 } })))).status).toBe(201);
+    expect((await send(post("/api/lab/runs", device({ kernels: { ...kernels, raster: null } })))).status).toBe(201);
+    // Rows come back in id order, and ids are random.
+    expect(db.labRows().map((r) => r.kernel_raster).sort()).toEqual([812, null]);
+  });
+
   it.each<[string, unknown]>([
     ["invalid JSON", "{"],
     ["extra key", { ...labRun(), ip: "1.2.3.4" }],
@@ -186,6 +196,8 @@ describe("POST /api/lab/runs", () => {
     ["negative score", device({ score: -1 })],
     ["missing kernel", device({ kernels: { float: 7130, typed: 151000, alloc: 18200 } })],
     ["zero kernel", device({ kernels: { float: 0, typed: 151000, alloc: 18200, path: 3010 } })],
+    ["zero raster", device({ kernels: { float: 7130, typed: 151000, alloc: 18200, path: 3010, raster: 0 } })],
+    ["unknown kernel", device({ kernels: { float: 7130, typed: 151000, alloc: 18200, path: 3010, raster: 812, blur: 10 } })],
     ["fractional cores", device({ cores: 2.5 })],
     ["fractional refresh", device({ refreshHz: 59.9 })],
     ["zero refresh", device({ refreshHz: 0 })],

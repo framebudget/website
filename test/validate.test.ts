@@ -104,6 +104,9 @@ describe("validateReport", () => {
     ["score as string", (r) => (r.score = "62")],
     ["warm undefined (absent)", (r) => delete r.warm],
     ["zero kernel rate", (r) => (r.kernels.float = 0)],
+    ["zero raster rate", (r) => (r.kernels.raster = 0)],
+    ["raster rate over MAX_RATE", (r) => (r.kernels.raster = 2e9)],
+    ["raster rate as string", (r) => (r.kernels.raster = "812")],
     ["kernels as array", (r) => ((r as Record<string, unknown>).kernels = [1, 2])],
     ["negative tick", (r) => (r.tickMs = -0.1)],
     ["fractional cores", (r) => (r.hints.cores = 2.5)],
@@ -140,6 +143,13 @@ describe("validateReport", () => {
     expect(variant((r) => (r.explored = "canvasHiRes"), validReportV2)).not.toBeNull();
   });
 
+  it("accepts the optional raster kernel in v1 and v2 reports", () => {
+    const v1 = variant((r) => (r.kernels.raster = 812));
+    expect(v1?.kernels).toEqual({ float: 7130, typed: 151000, alloc: 18200, path: 3010, raster: 812 });
+    expect(variant((r) => (r.kernels.raster = 812), validReportV2)?.kernels.raster).toBe(812);
+    expect(variant((r) => (r.kernels = { raster: 0.5 }), validReportV2)).not.toBeNull();
+  });
+
   it.each<[string, Mutate]>([
     ["v2 missing late", (r) => delete r.late],
     ["v2 missing used", (r) => delete r.used],
@@ -159,6 +169,7 @@ describe("validateReport", () => {
     ["duplicate used", (r) => (r.used as unknown[]).push("hover")],
     ["bad used name", (r) => (r.used as unknown[]).push("<script>")],
     ["used not array", (r) => (r.used = "hover")],
+    ["unknown kernel next to raster", (r) => Object.assign(r.kernels, { raster: 812, blur: 10 })],
   ])("rejects v2 %s", (_name, mutate) => {
     expect(variant(mutate, validReportV2)).toBeNull();
   });

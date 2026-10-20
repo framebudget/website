@@ -18,6 +18,13 @@
  * the cron's SQL, run over the export in an in-memory node:sqlite. Accepts the wrangler JSON
  * export (an array of `{ results: [...] }`), a plain JSON array of rows, or a CSV
  * export with a header row. Reads report v1 and v2 rows.
+ *
+ * Kernels: float, typed, alloc and path are measured by every library version; raster (canvas
+ * rasterization, warm run only) only by newer ones, so older rows and cold-only rows lack it.
+ * Scores use every kernel with both a rate and a reference above 0, as the library. The weights
+ * fit uses the four base kernels on every usable sample, and adds raster only when the samples
+ * that measured it pass the fit minimums on their own and are at least half of the usable
+ * samples (then the fit runs on those samples only); see fitSelection.
  */
 import { readdirSync, readFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
@@ -31,7 +38,9 @@ import { LATE_MAX, LATE_OVER_BASELINE, lowestThreshold, MAX_UNDER, MIN_DEVICES, 
 
 export { lowestThreshold, missedLateFrames };
 
-export const KERNELS = ["float", "typed", "alloc", "path"];
+export const KERNELS = ["float", "typed", "alloc", "path", "raster"];
+/** Kernels every library version measures; the current reference must have each of them. */
+export const BASE_KERNELS = ["float", "typed", "alloc", "path"];
 
 /** Defaults of every analysis option; `reference` and `calibration` default to the library's. */
 export const DEFAULT_OPTIONS = {
@@ -50,6 +59,8 @@ export const DEFAULT_OPTIONS = {
 export const MIN_FIT_SAMPLES = 20;
 /** Fewest failures and fewest passes the weights fit needs. */
 export const MIN_FIT_CLASS = 3;
+/** Smallest share of the usable fit samples that must have measured an optional kernel (raster) for it to join the fit. */
+export const MIN_OPTIONAL_KERNEL_SHARE = 0.5;
 const FIT_ITERATIONS = 2000;
 const FIT_RATE = 0.5;
 const FIT_L2 = 0.01;
@@ -92,8 +103,14 @@ Options:
                        Effects merge by name, field by field (threshold, cost, weights); invalid values
                        are ignored.
   --reference <list>   Current reference rates, e.g. float=10800,typed=219000,alloc=30900,path=4860.
-                       Default: defaultCalibration.reference of the installed framebudget package,
-                       overridden by calibration.json, then by the --calibration patch.`;
+                       float, typed, alloc and path are required; without raster, raster rates are not
+                       scored. Default: defaultCalibration.reference of the installed framebudget package,
+                       overridden by calibration.json, then by the --calibration patch.
+
+Weights fit kernels: float, typed, alloc and path on every sample with a warm run and all four;
+raster (warm run only, newer libraries) is added when the reference has it and the samples that
+measured it reach the fit minimums on their own and are at least ${MIN_OPTIONAL_KERNEL_SHARE * 100}% of those samples,
+and the fit then runs on those samples only.`;
 
 /** Parses RFC 4180 CSV (quoted fields, doubled quotes, newlines inside quotes). */
 export function parseCsv(text) {
@@ -392,32 +409,57 @@ export function capacityFit(rows, { band, maxUnder, minSamples }) {
 }
 
 /**
+ * Picks the kernels and samples the weights fit runs on. Usable samples measured every base
+ * kernel (float, typed, alloc, path: every library version measures them) and the reference
+ * has each of them. An optional kernel (raster: warm run only, newer libraries) joins when the
+ * reference has it and the usable samples that measured it would pass the fit's own minimums
+ * on their own (`needed` samples, MIN_FIT_CLASS failures and passes) and are at least
+ * MIN_OPTIONAL_KERNEL_SHARE of the usable samples; the fit then runs on those samples only.
+ * Otherwise the kernel is left out and no sample is dropped for lacking it.
+ */
+function fitSelection(samples, reference, needed) {
+  let usable = samples.filter((s) => BASE_KERNELS.every((k) => s.kernels[k] > 0 && reference[k] > 0));
+  const kernels = [...BASE_KERNELS];
+  for (const k of KERNELS) {
+    if (kernels.includes(k) || !(reference[k] > 0)) continue;
+    const measured = usable.filter((s) => s.kernels[k] > 0);
+    const failures = measured.filter((s) => s.failed).length;
+    const enough = measured.length >= needed && measured.length >= MIN_OPTIONAL_KERNEL_SHARE * usable.length;
+    if (enough && failures >= MIN_FIT_CLASS && measured.length - failures >= MIN_FIT_CLASS) {
+      usable = measured;
+      kernels.push(k);
+    }
+  }
+  return { kernels, usable };
+}
+
+/**
  * L2-regularised logistic regression of failure on x_k = ln(rate_k / reference_k), by plain
  * gradient descent on standardised features (fixed iterations, deterministic). A kernel whose
  * higher rate lowers the failure odds gets weight -beta_k; weights are clamped at 0,
- * normalised to sum 1 and rounded to 2 decimals. Samples are `{ kernels, failed }` with
- * every kernel measured.
+ * normalised to sum 1 and rounded to 2 decimals. Samples are `{ kernels, failed }`; the
+ * kernels fitted and the samples kept are those of `fitSelection`.
  */
 export function fitWeights(samples, reference, minSamples) {
-  const usable = samples.filter((s) => KERNELS.every((k) => s.kernels[k] > 0 && reference[k] > 0));
-  const failures = usable.filter((s) => s.failed).length;
-  /** @type {{ samples: number, failures: number, weights: Record<string, number> | null, reason: string | null }} */
-  const result = { samples: usable.length, failures, weights: null, reason: null };
   const needed = Math.max(minSamples, MIN_FIT_SAMPLES);
+  const { kernels, usable } = fitSelection(samples, reference, needed);
+  const failures = usable.filter((s) => s.failed).length;
+  /** @type {{ samples: number, failures: number, kernels: string[], weights: Record<string, number> | null, reason: string | null }} */
+  const result = { samples: usable.length, failures, kernels, weights: null, reason: null };
   if (usable.length < needed) return { ...result, reason: `fewer than ${needed} samples` };
   if (failures < MIN_FIT_CLASS || usable.length - failures < MIN_FIT_CLASS) {
     return { ...result, reason: `needs ${MIN_FIT_CLASS} failures and ${MIN_FIT_CLASS} passes` };
   }
   const n = usable.length;
-  const x = usable.map((s) => KERNELS.map((k) => Math.log(s.kernels[k] / reference[k])));
+  const x = usable.map((s) => kernels.map((k) => Math.log(s.kernels[k] / reference[k])));
   const y = usable.map((s) => (s.failed ? 1 : 0));
-  const mean = KERNELS.map((_, k) => x.reduce((sum, row) => sum + row[k], 0) / n);
+  const mean = kernels.map((_, k) => x.reduce((sum, row) => sum + row[k], 0) / n);
   // A constant column has no spread; its rounded sd can come out a tiny positive number, so test it exactly.
-  const spread = KERNELS.map((_, k) => x.some((row) => row[k] !== x[0][k]));
-  const sd = KERNELS.map((_, k) => (spread[k] ? Math.sqrt(x.reduce((sum, row) => sum + (row[k] - mean[k]) ** 2, 0) / n) : 0));
+  const spread = kernels.map((_, k) => x.some((row) => row[k] !== x[0][k]));
+  const sd = kernels.map((_, k) => (spread[k] ? Math.sqrt(x.reduce((sum, row) => sum + (row[k] - mean[k]) ** 2, 0) / n) : 0));
   const z = x.map((row) => row.map((v, k) => (spread[k] ? (v - mean[k]) / sd[k] : 0)));
   let bias = 0;
-  const beta = KERNELS.map(() => 0);
+  const beta = kernels.map(() => 0);
   for (let iteration = 0; iteration < FIT_ITERATIONS; iteration++) {
     let gradBias = 0;
     const grad = beta.map(() => 0);
@@ -431,12 +473,12 @@ export function fitWeights(samples, reference, minSamples) {
     bias -= (FIT_RATE * gradBias) / n;
     for (let k = 0; k < beta.length; k++) beta[k] -= FIT_RATE * (grad[k] / n + FIT_L2 * beta[k]);
   }
-  const raw = KERNELS.map((_, k) => (spread[k] ? Math.max(0, -beta[k] / sd[k]) : 0));
+  const raw = kernels.map((_, k) => (spread[k] ? Math.max(0, -beta[k] / sd[k]) : 0));
   const total = raw.reduce((s, w) => s + w, 0);
   if (!(total > 0)) return { ...result, reason: "no kernel predicts failure" };
   /** @type {Record<string, number>} */
   const weights = {};
-  KERNELS.forEach((k, i) => {
+  kernels.forEach((k, i) => {
     const w = Math.round((raw[i] / total) * 100) / 100;
     if (w > 0) weights[k] = w;
   });
@@ -804,6 +846,10 @@ function print(result, options) {
       ? "Rescale factor: - (no kernel has both a current and a proposed rate)"
       : `Rescale factor: ${result.factor.toFixed(3)} (new score = old score x factor)`,
   );
+  const added = KERNELS.filter((k) => result.proposed[k] > 0 && !(options.reference[k] > 0));
+  if (added.length) {
+    out.push(`  ${added.join(", ")}: no current reference, so the factor leaves it out; adopting its proposed rate adds it to the warm scores that measured it.`);
+  }
   out.push(`Warm devices at or above 100 on the proposed scale: ${result.atOrAbove100 === null ? "-" : (result.atOrAbove100 * 100).toFixed(0) + "%"}`);
   out.push("");
   out.push(`Effect thresholds (cal ${result.cal}, ${result.scoredRows} reports). A device failed an effect it ran when the governor`);
@@ -819,7 +865,8 @@ function print(result, options) {
   }
   out.push("");
   out.push(`Effect weights (one score per effect): logistic fit of failure on ln(rate / current reference) over samples`);
-  out.push(`with a warm run and all four kernels, from max(${options.minSamples}, ${MIN_FIT_SAMPLES}) samples with ${MIN_FIT_CLASS} failures and ${MIN_FIT_CLASS} passes.`);
+  out.push(`with a warm run and float, typed, alloc and path, from max(${options.minSamples}, ${MIN_FIT_SAMPLES}) samples with ${MIN_FIT_CLASS} failures and ${MIN_FIT_CLASS} passes.`);
+  out.push(`raster joins (fit on those samples only) when it has a current reference and its samples reach those minimums and ${MIN_OPTIONAL_KERNEL_SHARE * 100}% of the samples.`);
   out.push("The threshold is the band threshold on the weighted score, on the current and on the proposed reference.");
   out.push("  effect                 samples  failed  weights                                         threshold  proposed  band fail");
   for (const w of result.weights) {
@@ -946,7 +993,7 @@ async function main() {
   if (file) {
     options.calibration = calibration;
     options.reference ??= { ...calibration.reference };
-    const missing = KERNELS.filter((k) => !(options.reference[k] > 0));
+    const missing = BASE_KERNELS.filter((k) => !(options.reference[k] > 0));
     if (missing.length) {
       console.error(`No current reference rate for ${missing.join(", ")}; pass --reference.`);
       process.exit(2);

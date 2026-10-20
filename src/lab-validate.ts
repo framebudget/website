@@ -6,12 +6,13 @@
  * never holds more detail than documented, and steps are rebuilt with a fixed
  * key order.
  */
-import { CAL, hasKeys, isInt, isNum, isObject, isPositive, KERNELS, MAX_CORES, MAX_FPS, MAX_MEMORY_GB, MAX_RATE, MAX_SCORE, MAX_TICK_MS, type KernelName } from "./validate";
+import { BASE_KERNELS, CAL, hasKeys, isInt, isNum, isObject, isPositive, KERNELS, MAX_CORES, MAX_FPS, MAX_MEMORY_GB, MAX_RATE, MAX_SCORE, MAX_TICK_MS, type KernelName } from "./validate";
 
 export interface LabDevice {
   score: number;
   cold: number | null;
   warm: number | null;
+  /** `raster` is optional in the body (pages on libraries without it) and null when absent. */
   kernels: Record<KernelName, number | null>;
   tickMs: number | null;
   cores: number | null;
@@ -114,8 +115,9 @@ export function validateLabRun(input: unknown): LabRunRequest | null {
   const score = (v: unknown) => isNum(v, 0, MAX_SCORE);
   if (!score(d.score) || !isNullable(d.cold, score) || !isNullable(d.warm, score)) return null;
   const k = d.kernels;
-  if (!isObject(k) || !hasKeys(k, KERNELS, KERNELS)) return null;
-  if (!KERNELS.every((name) => isNullable(k[name], (v) => isPositive(v, MAX_RATE)))) return null;
+  if (!isObject(k) || !hasKeys(k, KERNELS, BASE_KERNELS)) return null;
+  const kernel = (name: KernelName): unknown => (Object.prototype.hasOwnProperty.call(k, name) ? k[name] : null);
+  if (!KERNELS.every((name) => isNullable(kernel(name), (v) => isPositive(v, MAX_RATE)))) return null;
   if (!isNullable(d.tickMs, (v) => isNum(v, 0, MAX_TICK_MS))) return null;
   if (!isNullable(d.cores, (v) => isInt(v, 1, MAX_CORES))) return null;
   if (!isNullable(d.memoryGb, (v) => isPositive(v, MAX_MEMORY_GB))) return null;
@@ -131,7 +133,7 @@ export function validateLabRun(input: unknown): LabRunRequest | null {
       score: oneDecimal(d.score),
       cold: orNull(d.cold, oneDecimal),
       warm: orNull(d.warm, oneDecimal),
-      kernels: Object.fromEntries(KERNELS.map((name) => [name, orNull(k[name] as number | null, (v) => significant(v, 3))])) as LabDevice["kernels"],
+      kernels: Object.fromEntries(KERNELS.map((name) => [name, orNull(kernel(name) as number | null, (v) => significant(v, 3))])) as LabDevice["kernels"],
       tickMs: orNull(d.tickMs, (v) => significant(v, 2)),
       cores: d.cores,
       memoryGb: d.memoryGb,

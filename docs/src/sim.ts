@@ -1,4 +1,4 @@
-import { budget, type BudgetSnapshot, type ChangeReason, type KernelName } from "framebudget";
+import { budget, type BudgetSnapshot, type ChangeReason } from "framebudget";
 import { compareNote, htmlAttrs, LEARNED, listNames as joinNames, WARM_NOTE } from "./copy";
 import { count } from "./counter";
 import { BY_NAME, FRAME_MS, LADDER_MAX, SITE_EFFECTS, deviceName, frameMs } from "./effects";
@@ -269,7 +269,8 @@ function mountCompare(): void {
 
 /* How it works: live attributes, kernels, ladder, learning --------------------------- */
 
-const KERNELS: KernelName[] = ["float", "typed", "alloc", "path"];
+/** Rows of the kernel table. raster comes only from framebudget versions that measure it; without a rate it shows "-". */
+const KERNELS = ["float", "typed", "alloc", "path", "raster"] as const;
 
 /** The live attributes on <html>, on both pages. */
 function mountAttrs(): void {
@@ -295,10 +296,14 @@ function mountHow(): void {
   watch((snap) => {
     const warm = snap.warm;
     if (warm) {
+      // Read by name: the installed framebudget may predate a kernel of the table.
+      const rates: Partial<Record<string, number>> = warm.rates;
+      const reference: Partial<Record<string, number>> = snap.calibration.reference;
       for (const k of KERNELS) {
-        const rate = warm.rates[k] ?? 0;
-        setText(document.querySelector(`[data-kernel-rate="${k}"]`)!, Math.round(rate).toLocaleString("en"));
-        setText(document.querySelector(`[data-kernel-ratio="${k}"]`)!, `${Math.round((rate / snap.calibration.reference[k]) * 100)}`);
+        const rate = rates[k];
+        const ref = reference[k];
+        setText(document.querySelector(`[data-kernel-rate="${k}"]`)!, rate ? Math.round(rate).toLocaleString("en") : "-");
+        setText(document.querySelector(`[data-kernel-ratio="${k}"]`)!, rate && ref ? `${Math.round((rate / ref) * 100)}` : "-");
       }
       count(warmScore, Math.round(warm.score));
       setText(warmNote, snap.simulated === null ? WARM_NOTE.real : WARM_NOTE.simulated);

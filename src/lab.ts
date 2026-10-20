@@ -24,7 +24,7 @@ const RUN_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]
 
 const RUN_COLUMNS = [
   "id", "created_day", "lib", "cal", "score", "cold", "warm", "tick_ms",
-  "kernel_float", "kernel_typed", "kernel_alloc", "kernel_path",
+  "kernel_float", "kernel_typed", "kernel_alloc", "kernel_path", "kernel_raster",
   "cores", "memory_gb", "refresh_hz", "dpr", "viewport_width", "reduced_motion", "save_data",
   "engine", "engine_version", "os", "mobile", "country", "write_key_hash", "open_until", "protocol",
 ];

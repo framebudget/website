@@ -169,8 +169,10 @@ budget.simulate(null); // back to the real device</code></pre>
 
       <section id="governor" aria-labelledby="governor-title">
         <h2 id="governor-title">Governor</h2>
-        <p>The governor starts at load, ignores the first 3 s, then judges windows of 30 frames by their median gap. A window under the target (45 fps) is a strike. After 3 strikes in a row from one source it steps one effect down, waits a 2 s cooldown, and emits <code>change</code>.</p>
+        <p>The governor starts at load. Frames reported with <code>budget.reportFrame</code> before load are queued (up to 1000) and handed to it at load, not dropped. It groups frames in windows of 30 per source. A frame is late when it takes more than 1.5 frame times (the display's own cadence, never faster than <code>targetFps</code>, default 60); a window is bad when more than 10% of its frames are late (<code>maxLateFraction</code>) or it runs under 30 fps (<code>minFps</code>). After 3 bad windows in a row from one source it steps one effect down, waits a 2 s cooldown, and emits <code>change</code>.</p>
         <ul class="docs__list">
+          <li>The 3 s warm-up after load (<code>warmupMs</code>) applies only to <code>"main"</code> and <code>"worker"</code> frames. An effect's own frames are judged from its first frame, before load included. The cooldown after a change applies to every source.</li>
+          <li>Consecutive frames of one effect form a run, which ends when the effect stops reporting for <code>maxGapMs</code> (1 s) or the page is hidden. A run that lasted at least <code>minRunMs</code> (250 ms) and averaged under <code>minFps</code> steps that effect down for good, and local learning remembers it, so the next visits start without it. Short effects such as page transitions and draw-ins are caught this way; long-running effects are still judged in windows too.</li>
           <li>Frames reported as <code>"main"</code> or <code>"worker"</code> step down the most expensive allowed effect.</li>
           <li>Frames reported with an effect's name step down that effect: report a canvas loop as <code>budget.reportFrame(gap, "canvasHiRes")</code>.</li>
           <li>framebudget samples main-thread frames itself during the first seconds and while the visitor interacts. Turn that off with <code>configure({ governor: { auto: false } })</code>.</li>
@@ -181,7 +183,7 @@ postMessage({ type: "frame", gap });
 worker.addEventListener("message", (e) =&gt; {
   if (e.data.type === "frame") budget.reportFrame(e.data.gap, "worker");
 });</code></pre>
-        <p>Tune <code>targetFps</code>, <code>windowFrames</code>, <code>strikes</code>, <code>warmupMs</code>, <code>cooldownMs</code>, <code>cleanWindows</code> and <code>maxGapMs</code> with <code>configure({ governor })</code>.</p>
+        <p>Tune <code>targetFps</code>, <code>minFps</code>, <code>maxLateFraction</code>, <code>windowFrames</code>, <code>strikes</code>, <code>warmupMs</code>, <code>cooldownMs</code>, <code>cleanWindows</code>, <code>maxGapMs</code> and <code>minRunMs</code> with <code>configure({ governor })</code>.</p>
       </section>
 
       <section id="learning" aria-labelledby="learning-title">
