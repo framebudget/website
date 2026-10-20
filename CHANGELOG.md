@@ -4,6 +4,20 @@ Every release of the framebudget website (framebudget.dev), newest first, split 
 
 Website versions are independent of the library's. Until 2026-10-03 the website shipped with the library, from one repository; that history is in the [framebudget CHANGELOG](https://github.com/framebudget/core/blob/main/CHANGELOG.md), up to and including 0.2.1.
 
+## [1.9.0] - 2026-10-20
+
+### Site
+
+#### Features
+
+- **worker:** accept and fit the raster kernel (#25) ([0e0f948](https://github.com/framebudget/website/commit/0e0f94878044f37d1f77f62d4ea2784a30a48711)) ([#25](https://github.com/framebudget/website/pull/25))
+
+### Worker
+
+#### Features
+
+- **worker:** accept and fit the raster kernel (#25) ([0e0f948](https://github.com/framebudget/website/commit/0e0f94878044f37d1f77f62d4ea2784a30a48711)) ([#25](https://github.com/framebudget/website/pull/25))
+
 ## [1.8.0] - 2026-10-19
 
 ### Site
