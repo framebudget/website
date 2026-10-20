@@ -50,7 +50,7 @@ describe("validateReport", () => {
   it("accepts the report the library sends", async () => {
     const page = fakePage();
     const budget = createBudget({ scope: page.scope, random: () => 0, pause: () => Promise.resolve() });
-    budget.configure({ share: { endpoint: "/api/report", sampleRate: 1 }, governor: { auto: false } });
+    budget.configure({ share: { sampleRate: 1, calibrationUrl: "/api/calibration" }, governor: { auto: false } });
     // Load runs on a timer; after the warm benchmark, sharing arms the report on pagehide.
     await vi.waitFor(() => {
       page.timers.splice(0).forEach((timer) => timer());
@@ -58,7 +58,7 @@ describe("validateReport", () => {
     });
     page.listeners.pagehide!.forEach((listener) => listener());
 
-    expect(page.beacons.map((b) => b.url)).toEqual(["/api/report"]);
+    expect(page.beacons.map((b) => b.url)).toEqual(["https://framebudget.dev/api/report"]);
     const report = JSON.parse(page.beacons[0]!.body) as TelemetryReport;
     // The real benchmark and the default effects: kernel rates, a warm score and allowed effects all present.
     expect(report.warm).not.toBeNull();

@@ -8,7 +8,8 @@ import { configure, type ShareOptions } from "framebudget";
 
 const KEY = "framebudget-site-share";
 
-export const SHARE: ShareOptions = { endpoint: "/api/report", sampleRate: 1, minIntervalDays: 7, calibrationUrl: "/api/calibration" };
+// Reports always go to https://framebudget.dev/api/report, this site's own Worker.
+export const SHARE: ShareOptions = { sampleRate: 1, minIntervalDays: 7, calibrationUrl: "/api/calibration" };
 
 type Choice = "on" | "off" | null;
 
