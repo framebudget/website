@@ -207,6 +207,66 @@ describe("calibrate", () => {
     expect(fit.weights!.path).toBeGreaterThanOrEqual(0.8);
   });
 
+  describe("raster kernel", () => {
+    const WITH_RASTER = { ...REFERENCE, raster: 900 };
+    const BASE = ["float", "typed", "alloc", "path"];
+
+    /** 120 samples with random base kernels; the first `withRaster` also measured raster. */
+    function mixed(seed: number, withRaster: number, fails: (x: Record<string, number>) => boolean) {
+      const random = lcg(seed);
+      return range(1, 120).map((i) => {
+        const x = Object.fromEntries([...KERNEL_NAMES, "raster"].map((k) => [k, random() * 2 - 1]));
+        const kernels: Record<string, number> = Object.fromEntries(KERNEL_NAMES.map((k) => [k, REFERENCE[k] * Math.exp(x[k]!)]));
+        if (i <= withRaster) kernels.raster = WITH_RASTER.raster * Math.exp(x.raster!);
+        return { kernels, failed: fails(x) };
+      });
+    }
+
+    it("scores over the kernels with both a rate and a reference above 0", () => {
+      const half = Object.fromEntries(KERNEL_NAMES.map((k) => [k, REFERENCE[k] * 0.5]));
+      expect(scoreOf(half, WITH_RASTER)).toBeCloseTo(50, 9);
+      // raster at a quarter: geomean of 0.5 x 4 and 0.25.
+      expect(scoreOf({ ...half, raster: 225 }, WITH_RASTER)).toBeCloseTo(100 * 2 ** (-6 / 5), 9);
+      // A reference without raster, or the cold reference's 0, leaves the rate out.
+      expect(scoreOf({ ...half, raster: 225 }, REFERENCE)).toBeCloseTo(50, 9);
+      expect(scoreOf({ ...half, raster: 225 }, { ...WITH_RASTER, raster: 0 })).toBeCloseTo(50, 9);
+    });
+
+    it("fits the base kernels on every sample while few samples measured raster", () => {
+      const samples = mixed(13, 40, (x) => x.path! < -0.2);
+      const fit = fitWeights(samples, WITH_RASTER, 10);
+      expect(fit).toMatchObject({ samples: 120, kernels: BASE, reason: null });
+      expect(fit.weights!.raster).toBeUndefined();
+      expect(fit.weights!.path).toBeGreaterThanOrEqual(0.8);
+    });
+
+    it("adds raster, on the samples that measured it, once enough of them did", () => {
+      const samples = mixed(17, 90, (x) => x.raster! < -0.2);
+      const fit = fitWeights(samples, WITH_RASTER, 10);
+      expect(fit).toMatchObject({ samples: 90, kernels: [...BASE, "raster"], reason: null });
+      expect(fit.weights!.raster).toBeGreaterThanOrEqual(0.8);
+      // Without a raster reference, raster never joins and no sample is dropped.
+      expect(fitWeights(samples, REFERENCE, 10)).toMatchObject({ samples: 120, kernels: BASE });
+    });
+
+    it("keeps rows without raster in the report analysis", () => {
+      const rows = range(40, 79).flatMap((score) => {
+        const fast = row(score, { effects: ["blur"], used: ["blur"], late: { main: 0.01 } });
+        const slow = row(score, { effects: ["blur"], used: ["blur"], late: { main: 0.4 } });
+        slow.kernel_path = (REFERENCE.path * score) / 200;
+        slow.kernel_float = (REFERENCE.float * score) / 50;
+        // A quarter of the rows come from a library that measures raster.
+        if (score % 4 === 0) fast.kernel_raster = slow.kernel_raster = (WITH_RASTER.raster * score) / 100;
+        return [fast, slow];
+      });
+      const result = analyze(rows, { ...OPTIONS, reference: WITH_RASTER, minSamples: 5 });
+      const blur = result.weights.find((w: { name: string }) => w.name === "blur")!;
+      expect(blur).toMatchObject({ samples: 80, kernels: BASE });
+      expect(blur.weights!.path).toBeGreaterThanOrEqual(0.9);
+      expect(result.proposed.raster).toBeGreaterThan(0);
+    });
+  });
+
   it("proposes weights and a weighted threshold from the report rows", () => {
     // Two device families with the same device score: only the slow-path one fails.
     const rows = range(40, 79).flatMap((score) => {

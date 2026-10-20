@@ -54,7 +54,7 @@
           <tbody>
             <tr><th scope="row">Calibration version</th><td>Which set of reference numbers the scores were computed with.</td></tr>
             <tr><th scope="row">Scores</th><td>The device score (100 is the reference phone), and the cold and warm benchmark scores, rounded to whole numbers.</td></tr>
-            <tr><th scope="row">Kernel rates</th><td>How much work each of the four benchmark kernels did per millisecond, to 3 significant digits.</td></tr>
+            <tr><th scope="row">Kernel rates</th><td>How much work each benchmark kernel did per millisecond, to 3 significant digits: float math, typed arrays, allocation and canvas paths, plus canvas rasterization from framebudget versions that measure it.</td></tr>
             <tr><th scope="row">Clock resolution</th><td>The precision of the page's timer, in milliseconds.</td></tr>
             <tr><th scope="row">Hardware hints</th><td>The number of logical cores and the rounded memory size the browser reports, the Compute Pressure state when available, and whether reduced motion is on.</td></tr>
             <tr><th scope="row">Decision</th><td>The tier, the effects that ran, and the effects framebudget stepped down because frames were late. From framebudget versions that send them: the effects the page used, and the effect a page view turned on just below its threshold to calibrate it, if any.</td></tr>

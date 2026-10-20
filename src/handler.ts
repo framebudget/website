@@ -46,11 +46,11 @@ const UNDER_DAILY_CAP = "COALESCE((SELECT n FROM report_days WHERE day = ?), 0) 
 /** Inserts the report only while the day is under the cap. */
 const INSERT_SQL = `INSERT INTO reports (
   created_day, cal, score, cold, warm, tick_ms,
-  kernel_float, kernel_typed, kernel_alloc, kernel_path,
+  kernel_float, kernel_typed, kernel_alloc, kernel_path, kernel_raster,
   cores, memory_gb, pressure, reduced_motion, tier, effects, stepped, fps, fps_main,
   engine, engine_version, os, mobile, country,
   v, used, explored, late, late_main
-) SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+) SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
 WHERE ${UNDER_DAILY_CAP}`;
 
 /**

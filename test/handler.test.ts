@@ -60,6 +60,7 @@ describe("POST /api/report", () => {
         kernel_typed: 151000,
         kernel_alloc: 18200,
         kernel_path: 3010,
+        kernel_raster: null,
         cores: 8,
         memory_gb: 4,
         pressure: "nominal",
@@ -107,6 +108,20 @@ describe("POST /api/report", () => {
     expect(rows[0]).toMatchObject({ v: 2, explored: null, late: '{"worker":0.2}', late_main: null });
   });
 
+  it("stores the raster kernel of a v2 report", async () => {
+    const r = { ...validReportV2(), kernels: { float: 7130, typed: 151000, alloc: 18200, path: 3010, raster: 812 } };
+    const { response, rows } = await send(beacon({ body: JSON.stringify(r) }));
+    expect(response.status).toBe(204);
+    expect(rows[0]).toMatchObject({ v: 2, kernel_path: 3010, kernel_raster: 812 });
+  });
+
+  it("rejects a v2 report with an unknown kernel and stores nothing", async () => {
+    const r = { ...validReportV2(), kernels: { float: 7130, typed: 151000, alloc: 18200, path: 3010, raster: 812, blur: 10 } };
+    const { response, rows } = await send(beacon({ body: JSON.stringify(r) }));
+    expect(response.status).toBe(400);
+    expect(rows).toHaveLength(0);
+  });
+
   it("never stores the user agent, IP, city or the sending site", async () => {
     const { env, db } = makeEnv();
     await handleFetch(from(beacon(), OTHER_ORIGIN, "cross-site"), env, makeCtx().ctx, NOW);
@@ -127,6 +142,7 @@ describe("POST /api/report", () => {
     expect(rows[0]).toMatchObject({
       warm: null,
       kernel_float: null,
+      kernel_raster: null,
       cores: null,
       memory_gb: null,
       pressure: null,

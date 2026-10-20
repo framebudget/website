@@ -5,7 +5,7 @@
  * at any level, wrong types, out-of-range numbers, malformed names.
  */
 
-export type KernelName = "float" | "typed" | "alloc" | "path";
+export type KernelName = "float" | "typed" | "alloc" | "path" | "raster";
 export type Tier = "Full" | "High" | "Medium" | "Lite";
 export type PressureState = "nominal" | "fair" | "serious" | "critical";
 
@@ -47,7 +47,12 @@ export const MAX_NAMES = 64;
 export const MAX_FPS_KEYS = 40;
 export const MAX_FPS = 1000;
 
-export const KERNELS: readonly KernelName[] = ["float", "typed", "alloc", "path"];
+export const KERNELS: readonly KernelName[] = ["float", "typed", "alloc", "path", "raster"];
+/**
+ * Kernels every library version measures. `raster` (warm run only, newer
+ * libraries) is optional wherever a full kernel set is required.
+ */
+export const BASE_KERNELS: readonly KernelName[] = ["float", "typed", "alloc", "path"];
 const TIERS: readonly string[] = ["Full", "High", "Medium", "Lite"];
 const PRESSURES: readonly string[] = ["nominal", "fair", "serious", "critical"];
 const NAME = /^[A-Za-z][A-Za-z0-9_-]{0,31}$/;

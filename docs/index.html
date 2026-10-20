@@ -127,7 +127,7 @@ budget.on("change", (snapshot) =&gt; {
           <div class="moment__text">
             <p class="moment__when">At the load event</p>
             <h3>Measure again, warm</h3>
-            <p>Once the CPU has ramped up, a longer benchmark runs in five short tasks, never one long one. Four kernels give a score where 100 is the reference phone, using the median of each and the geometric mean of all four, so no single kernel dominates. The score is cached for the next page.</p>
+            <p>Once the CPU has ramped up, a longer benchmark runs in five short tasks, never one long one. Four CPU kernels and a raster kernel give a score where 100 is the reference phone, using the median of each and the geometric mean of all of them, so no single kernel dominates. The raster kernel draws curves into a canvas and reads a pixel back so the drawing really finishes: a proxy for paint cost, not a measure of SVG compositing, and it runs on this warm benchmark only. The score is cached for the next page.</p>
           </div>
           <div class="moment__live panel spot">
             <p class="panel__label">This device, warm</p>
@@ -138,6 +138,7 @@ budget.on("change", (snapshot) =&gt; {
                 <tr><th scope="row">Typed arrays</th><td class="r num" data-kernel-rate="typed">...</td><td class="r num" data-kernel-ratio="typed">...</td></tr>
                 <tr><th scope="row">Allocation</th><td class="r num" data-kernel-rate="alloc">...</td><td class="r num" data-kernel-ratio="alloc">...</td></tr>
                 <tr><th scope="row">Canvas paths</th><td class="r num" data-kernel-rate="path">...</td><td class="r num" data-kernel-ratio="path">...</td></tr>
+                <tr><th scope="row">Canvas raster</th><td class="r num" data-kernel-rate="raster">...</td><td class="r num" data-kernel-ratio="raster">...</td></tr>
               </tbody>
             </table>
             <p class="kernels__score">Score <span class="num num--3" data-warm-score>...</span><span class="kernels__note"><!-- fb:reserve:warm-note Waiting for the load event --></span></p>
@@ -158,7 +159,7 @@ budget.on("change", (snapshot) =&gt; {
           <div class="moment__text">
             <p class="moment__when">While the page runs</p>
             <h3>A governor watches real frames</h3>
-            <p>It judges windows of 30 frames. Three windows in a row under 45 fps step one effect down, the most expensive first, then it waits two seconds. A phone that heats up loses its blur before it loses its frames.</p>
+            <p>An effect's frames count from its very first one, even before load. A run of an effect that lasts at least 250 ms and averages under 30 fps turns that effect off for good, and this device remembers it, so a page transition or a draw-in is caught too. Longer stretches are judged in windows of 30 frames: three bad windows in a row step one effect down, then it waits two seconds. A phone that heats up loses its blur before it loses its frames.</p>
           </div>
           <div class="moment__live panel spot">
             <p class="panel__label">Governor log</p>
