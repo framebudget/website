@@ -4,6 +4,16 @@ Every release of the framebudget website (framebudget.dev), newest first, split 
 
 Website versions are independent of the library's. Until 2026-10-03 the website shipped with the library, from one repository; that history is in the [framebudget CHANGELOG](https://github.com/framebudget/core/blob/main/CHANGELOG.md), up to and including 0.2.1.
 
+## [1.9.2] - 2026-10-31
+
+### Site
+
+No changes.
+
+### Worker
+
+No changes.
+
 ## [1.9.1] - 2026-10-20
 
 ### Site
