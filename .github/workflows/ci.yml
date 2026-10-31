@@ -6,8 +6,8 @@
 #   worker    typecheck and tests of the Cloudflare Worker (the repository root)
 #   gate      one required check: fails when a job that ran failed, passes when the rest skipped
 #
-# Both projects install the library from the framebudget/core release tarballs
-# that their lockfiles pin by integrity; no registry token is needed.
+# Both projects install the library from npmjs, pinned to an exact version and
+# by integrity in their lockfiles; no registry token is needed.
 name: CI
 
 on:
