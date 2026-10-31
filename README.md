@@ -12,15 +12,14 @@ Related repositories: the library is [github.com/framebudget/core](https://githu
 
 ## The library as a dependency
 
-The site and the Worker's tests use the published library, never its source. `docs/package.json` (dependency) and the root `package.json` (devDependency) install it from the release assets of core [v0.9.0](https://github.com/framebudget/core/releases/tag/v0.9.0) rather than from npmjs: `"framebudget": "https://github.com/framebudget/core/releases/download/v0.9.0/framebudget-0.9.0.tgz"`, with an npm `override` pointing its one dependency, `@framebudget/core`, at its own asset of the same release (`framebudget-core-0.9.0.tgz`), so one copy is installed and nothing comes from a registry. Release assets are immutable and public, so no registry or token is involved, and both lockfiles pin each tarball's integrity. Check the tarballs against the core release attestation with:
+The site and the Worker's tests use the published library, never its source. `docs/package.json` (dependency) and the root `package.json` (devDependency) install `framebudget` from npmjs, pinned to an exact version (`"framebudget": "0.9.0"`). Its one dependency, `@framebudget/core`, is pinned to the same version by the package itself, so one copy is installed. Both lockfiles pin each tarball's integrity, and no npm login or token is involved. Every version is published from the core release workflow with npm provenance; check the installed packages with:
 
 ```sh
-gh release download v0.9.0 --repo framebudget/core --pattern 'framebudget-*0.9.0.tgz'
-gh release verify-asset v0.9.0 framebudget-0.9.0.tgz --repo framebudget/core
-gh release verify-asset v0.9.0 framebudget-core-0.9.0.tgz --repo framebudget/core
+npm audit signatures
+npm audit signatures --prefix docs
 ```
 
-The package's `README.md` becomes `llms-full.txt`, and the Worker's calibration script reads `defaultCalibration` from it. To move to a new library release, change the two URLs (the dependency and its `override`) in both `package.json` files, run `npm install` at the root and in `docs/`, and commit both lockfiles.
+The package's `README.md` becomes `llms-full.txt`, and the Worker's calibration script reads `defaultCalibration` from it, which is why the version is exact rather than a range. To move to a new library release, run `npm install framebudget@<version> --save-exact` at the root and in `docs/`, and commit both lockfiles.
 
 ## Local development
 

@@ -159,8 +159,8 @@ jobs:
           cache-dependency-path: |
             package-lock.json
             docs/package-lock.json
-      # The Worker is the root project; the site is docs/. The library comes from the
-      # core release tarball the lockfiles pin by integrity.
+      # The Worker is the root project; the site is docs/. The library comes from
+      # npmjs, pinned to an exact version and by integrity in the lockfiles.
       - name: Install
         run: |
           npm ci

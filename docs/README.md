@@ -4,7 +4,7 @@ The landing page and API reference for framebudget. The page is also a demo of t
 
 ## Commands
 
-Run these in `docs/`. The site depends on the published library: `framebudget` in `package.json` is the `framebudget-0.9.0.tgz` asset of the framebudget/core v0.9.0 release, and an npm `override` points `@framebudget/core` at the same release's asset, both pinned by integrity in `package-lock.json`. Verify a tarball with `gh release verify-asset v0.9.0 <file> --repo framebudget/core` (see the repository `README.md`). The library's source is [github.com/framebudget/core](https://github.com/framebudget/core).
+Run these in `docs/`. The site depends on the published library: `framebudget` in `package.json` is pinned to an exact version on npmjs, and `package-lock.json` pins it and `@framebudget/core` by integrity. Check their provenance with `npm audit signatures` (see the repository `README.md`). The library's source is [github.com/framebudget/core](https://github.com/framebudget/core).
 
 | Command | What it does |
 | --- | --- |
